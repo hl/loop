@@ -65,14 +65,14 @@ Each iteration gets a fresh context window — no degradation over long projects
 
 | Command | Mode | Prompt File | Purpose |
 | ------- | ---- | ----------- | ------- |
-| `./loop.sh plan` | Planning | PROMPT_plan.md | Gap analysis, create/update plan |
-| `./loop.sh plan 5` | Planning | PROMPT_plan.md | Planning with max 5 iterations |
-| `./loop.sh` | Building | PROMPT_build.md | Implement from plan (unlimited) |
-| `./loop.sh 20` | Building | PROMPT_build.md | Implement with max 20 iterations |
+| `./loop.sh plan` | Planning | loop/PROMPT_plan.claude.md | Gap analysis, create/update plan |
+| `./loop.sh plan 5` | Planning | loop/PROMPT_plan.claude.md | Planning with max 5 iterations |
+| `./loop.sh` | Building | loop/PROMPT_build.claude.md | Implement from plan (unlimited) |
+| `./loop.sh 20` | Building | loop/PROMPT_build.claude.md | Implement with max 20 iterations |
 
 ### Choose the CLI (Claude or Codex)
 
-By default the loop runs `claude`. To use Codex, set `LOOP_CLI=codex`.
+By default the loop runs `claude` (unless `loop/config.ini` overrides). To use Codex, set `LOOP_CLI=codex` or use a profile in `loop/config.ini`.
 
 ```bash
 # Claude (default)
@@ -80,6 +80,9 @@ By default the loop runs `claude`. To use Codex, set `LOOP_CLI=codex`.
 
 # Codex
 LOOP_CLI=codex LOOP_MODEL=o3 ./loop.sh
+
+# Or via profile
+./loop.sh --profile codex-fast
 
 # Add extra CLI flags (applies to the selected CLI)
 LOOP_CLI=codex LOOP_CLI_FLAGS="--full-auto -s workspace-write" ./loop.sh
@@ -89,7 +92,57 @@ Environment variables:
 - `LOOP_CLI` — `claude` (default) or `codex` (or another CLI command on PATH)
 - `LOOP_MODEL` — model name passed to the CLI
 - `LOOP_CLI_FLAGS` — extra flags appended to the CLI invocation
-- `MAX_TURNS` — only used by the Claude CLI
+- `LOOP_REASONING_EFFORT` — reasoning effort passed to Codex (`low`, `medium`, `high`)
+- `LOOP_CONFIG_FILE` — override config path (default `loop/config.ini`)
+- `MAX_TURNS` — only used by the Claude CLI (default from config)
+- `MAX_RETRIES`, `MAX_STALLS`, `LOG_DIR` — override config defaults
+
+### Profiles
+
+Use `--profile NAME` to load settings from `loop/config.ini`. This keeps friendly, reusable presets without relying on env vars.
+
+```bash
+./loop.sh --profile codex-fast plan 3
+./loop.sh --profile claude-strong 10
+```
+
+`loop/config.ini` format (INI-style):
+
+```ini
+[defaults]
+cli=claude
+model=opus
+max_turns=200
+max_retries=3
+max_stalls=3
+log_dir=loop/logs
+prompt_plan=loop/PROMPT_plan.claude.md
+prompt_build=loop/PROMPT_build.claude.md
+
+[codex-fast]
+cli=codex
+model=gpt-5.2-codex
+cli_flags=--full-auto -s workspace-write
+reasoning_effort=medium
+prompt_plan=loop/PROMPT_plan.codex.md
+prompt_build=loop/PROMPT_build.codex.md
+```
+
+Precedence (highest → lowest): explicit env vars, profile values, defaults, built-ins. Profiles can override prompt paths and log_dir.
+
+### Multi-model workflow
+
+You can switch models between runs by setting `LOOP_MODEL` per command. This lets you use a faster/cheaper model for planning and a stronger model for building.
+
+```bash
+# Plan with a faster model, build with a stronger one
+LOOP_CLI=codex LOOP_MODEL=gpt-5.2-codex ./loop.sh plan 3
+LOOP_CLI=codex LOOP_MODEL=o3 ./loop.sh
+
+# Mix CLIs and models across runs
+LOOP_CLI=claude LOOP_MODEL=sonnet ./loop.sh plan
+LOOP_CLI=codex LOOP_MODEL=gpt-5.2-codex ./loop.sh 10
+```
 
 ### Plan Refinement
 
@@ -121,28 +174,35 @@ Run `./loop.sh plan 3` for a well-refined plan. Diminishing returns after 3-4 it
 | `--json` | Emit JSONL events to stdout |
 | `--model o3` | Select model (set via `LOOP_MODEL`) |
 
+Note: `--dangerously-bypass-approvals-and-sandbox` is only added when no `cli_flags` are set (to avoid conflicts with `--full-auto`).
+
 ## Prerequisites
 
 1. **Prompt files** — Create before running:
-   - `PROMPT_plan.md` — Planning mode instructions
-   - `PROMPT_build.md` — Building mode instructions
+   - `loop/PROMPT_plan.claude.md` — Planning mode instructions (Claude)
+   - `loop/PROMPT_build.claude.md` — Building mode instructions (Claude)
+   - `loop/PROMPT_plan.codex.md` — Planning mode instructions (Codex)
+   - `loop/PROMPT_build.codex.md` — Building mode instructions (Codex)
 
 2. **Specs** — Requirements in `docs/specs/` (see [Writing Specs](#writing-specs))
 
 3. **AGENTS.md** — Build/test/lint commands for your project. Minimum content is a `## Validation` section listing your commands
 
-4. **`.gitignore`** — The build prompt stages and commits files; without a `.gitignore`, build artifacts, `node_modules/`, `.env`, `logs/`, etc. will be committed
+4. **`.gitignore`** — The build prompt stages and commits files; without a `.gitignore`, build artifacts, `node_modules/`, `.env`, `loop/logs/`, etc. will be committed
 
 ## File Structure
 
 ```text
 project-root/
 ├── loop.sh                    # Loop runner
-├── PROMPT_build.md            # Building mode instructions
-├── PROMPT_plan.md             # Planning mode instructions
+├── loop/PROMPT_build.claude.md # Building mode instructions (Claude)
+├── loop/PROMPT_plan.claude.md  # Planning mode instructions (Claude)
+├── loop/PROMPT_build.codex.md  # Building mode instructions (Codex)
+├── loop/PROMPT_plan.codex.md   # Planning mode instructions (Codex)
 ├── AGENTS.md                  # Operational guide (build/test commands)
 ├── IMPLEMENTATION_PLAN.md     # Task list (generated)
-├── logs/                      # Iteration logs (gitignore this)
+├── loop/config.ini            # Loop config + profiles
+├── loop/logs/                 # Iteration logs (gitignore this)
 ├── lib/                       # Source code (adjust path to your project)
 └── docs/specs/                # Requirement specifications
 ```
@@ -163,13 +223,13 @@ Keep specs focused. A spec for "user authentication" and a separate spec for "pa
 
 ## Prompt Templates
 
-The prompts live in `PROMPT_plan.md` and `PROMPT_build.md`. Edit those files directly. Below is a summary of what each does and the patterns they use.
+The prompts live in `loop/PROMPT_plan.claude.md` and `loop/PROMPT_build.claude.md` (Claude) and `loop/PROMPT_plan.codex.md` and `loop/PROMPT_build.codex.md` (Codex). Edit those files directly. Below is a summary of what each does and the patterns they use.
 
-### PROMPT_plan.md
+### loop/PROMPT_plan.claude.md
 
 Uses parallel Task agents to study specs, existing source code, and the current plan. Compares implementation against specs to identify gaps. Outputs a prioritized IMPLEMENTATION_PLAN.md with each task noting which files/modules it touches (so the build phase can assess parallelism). Commits the updated plan. Does not implement anything.
 
-### PROMPT_build.md
+### loop/PROMPT_build.claude.md
 
 Each build iteration runs through six phases:
 
@@ -256,7 +316,7 @@ The plan is disposable. Regenerate when:
 2. **Watch initial loops** — observe failure patterns, then add guardrails
 3. **One task per iteration** — fresh context = full context window utilization
 4. **Plan is cheap** — run `./loop.sh plan 3` for a well-refined plan
-5. **Check logs when debugging** — each iteration writes to `logs/` with timestamped JSON
+5. **Check logs when debugging** — each iteration writes to `loop/logs/` with timestamped JSON
 6. **Tune `MAX_TURNS`** — lower for simple projects (`MAX_TURNS=50 ./loop.sh`), keep high for complex ones
 
 ## References
