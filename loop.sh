@@ -36,6 +36,32 @@ MAX_TURNS=${MAX_TURNS:-200}
 MAX_RETRIES=3
 LOG_DIR="logs"
 CURRENT_BRANCH=$(git branch --show-current)
+LOOP_CLI=${LOOP_CLI:-claude}
+LOOP_MODEL=${LOOP_MODEL:-opus}
+
+CLI_EXTRA_FLAGS=()
+if [ -n "${LOOP_CLI_FLAGS:-}" ]; then
+    # shellcheck disable=SC2206
+    CLI_EXTRA_FLAGS=($LOOP_CLI_FLAGS)
+fi
+
+if ! command -v "$LOOP_CLI" >/dev/null 2>&1; then
+    echo "Error: $LOOP_CLI not found in PATH"
+    exit 1
+fi
+
+case "$LOOP_CLI" in
+    claude)
+        CLI_CMD=(claude -p --dangerously-skip-permissions --output-format=stream-json --model "$LOOP_MODEL" --max-turns "$MAX_TURNS" --verbose)
+        ;;
+    codex)
+        CLI_CMD=(codex exec --dangerously-bypass-approvals-and-sandbox --json --model "$LOOP_MODEL")
+        ;;
+    *)
+        CLI_CMD=("$LOOP_CLI")
+        ;;
+esac
+CLI_CMD+=("${CLI_EXTRA_FLAGS[@]}")
 
 mkdir -p "$LOG_DIR"
 
@@ -43,8 +69,14 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Mode:        $MODE"
 echo "Prompt:      $PROMPT_FILE"
 echo "Branch:      $CURRENT_BRANCH"
+echo "CLI:         $LOOP_CLI"
+echo "Model:       $LOOP_MODEL"
 [ "$MAX_ITERATIONS" -gt 0 ] && echo "Max:         $MAX_ITERATIONS iterations"
-echo "Max turns:   $MAX_TURNS per iteration"
+if [ "$LOOP_CLI" = "claude" ]; then
+    echo "Max turns:   $MAX_TURNS per iteration"
+else
+    echo "Max turns:   n/a (Claude only)"
+fi
 echo "Stall limit: $MAX_STALLS consecutive stalls"
 echo "Logs:        $LOG_DIR/"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -64,26 +96,21 @@ while true; do
     HEAD_BEFORE=$(git rev-parse HEAD 2>/dev/null || echo "none")
     LOG_FILE="$LOG_DIR/${MODE}_$(date +%Y%m%d_%H%M%S)_$ITERATION.json"
 
-    # Run claude with retry + backoff for transient failures (API errors, rate limits, network)
+    # Run agent with retry + backoff for transient failures (API errors, rate limits, network)
     RETRY=0
     while true; do
-        if claude -p \
-            --dangerously-skip-permissions \
-            --output-format=stream-json \
-            --model opus \
-            --max-turns "$MAX_TURNS" \
-            --verbose \
+        if "${CLI_CMD[@]}" \
             < "$PROMPT_FILE" \
             > "$LOG_FILE" 2>&1; then
             break
         else
             RETRY=$((RETRY + 1))
             if [ "$RETRY" -ge "$MAX_RETRIES" ]; then
-                echo "✖ Claude failed $MAX_RETRIES times. Stopping."
+                echo "✖ Agent failed $MAX_RETRIES times. Stopping."
                 exit 1
             fi
             DELAY=$((RETRY * 30))
-            echo "⚠ Claude exited with error (retry $RETRY/$MAX_RETRIES in ${DELAY}s)"
+            echo "⚠ Agent exited with error (retry $RETRY/$MAX_RETRIES in ${DELAY}s)"
             sleep "$DELAY"
         fi
     done

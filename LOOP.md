@@ -70,6 +70,27 @@ Each iteration gets a fresh context window — no degradation over long projects
 | `./loop.sh` | Building | PROMPT_build.md | Implement from plan (unlimited) |
 | `./loop.sh 20` | Building | PROMPT_build.md | Implement with max 20 iterations |
 
+### Choose the CLI (Claude or Codex)
+
+By default the loop runs `claude`. To use Codex, set `LOOP_CLI=codex`.
+
+```bash
+# Claude (default)
+./loop.sh
+
+# Codex
+LOOP_CLI=codex LOOP_MODEL=o3 ./loop.sh
+
+# Add extra CLI flags (applies to the selected CLI)
+LOOP_CLI=codex LOOP_CLI_FLAGS="--full-auto -s workspace-write" ./loop.sh
+```
+
+Environment variables:
+- `LOOP_CLI` — `claude` (default) or `codex` (or another CLI command on PATH)
+- `LOOP_MODEL` — model name passed to the CLI
+- `LOOP_CLI_FLAGS` — extra flags appended to the CLI invocation
+- `MAX_TURNS` — only used by the Claude CLI
+
 ### Plan Refinement
 
 Running the plan loop multiple times is intentional. Each iteration reviews the previous plan against the specs and source code, producing incremental improvements:
@@ -80,7 +101,7 @@ Running the plan loop multiple times is intentional. Each iteration reviews the 
 
 Run `./loop.sh plan 3` for a well-refined plan. Diminishing returns after 3-4 iterations for most projects.
 
-### CLI Flags Used
+### CLI Flags Used (Claude default)
 
 | Flag | Purpose |
 | ---- | ------- |
@@ -90,6 +111,15 @@ Run `./loop.sh plan 3` for a well-refined plan. Diminishing returns after 3-4 it
 | `--model opus` | Complex reasoning (change to `sonnet` for speed) |
 | `--max-turns N` | Cap tool-use rounds per iteration (default 200, override with `MAX_TURNS` env var) |
 | `--verbose` | Detailed execution logging |
+
+### CLI Flags Used (Codex)
+
+| Flag | Purpose |
+| ---- | ------- |
+| `exec` | Run Codex non-interactively |
+| `--dangerously-bypass-approvals-and-sandbox` | Skip approvals and sandboxing |
+| `--json` | Emit JSONL events to stdout |
+| `--model o3` | Select model (set via `LOOP_MODEL`) |
 
 ## Prerequisites
 
