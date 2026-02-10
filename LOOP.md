@@ -70,6 +70,7 @@ Each iteration gets a fresh context window — no degradation over long projects
 | `./loop.sh` | Building | loop/PROMPT_build.claude.md | Implement from plan (unlimited) |
 | `./loop.sh 20` | Building | loop/PROMPT_build.claude.md | Implement with max 20 iterations |
 
+Prompt files shown are the defaults. Profiles can override them (e.g., Codex profiles use the `.codex.md` prompts).
 ### Choose the CLI (Claude or Codex)
 
 By default the loop runs `claude` (per `loop/config.ini`). To use Codex, select a profile in `loop/config.ini`.
@@ -242,7 +243,15 @@ When all tasks in IMPLEMENTATION_PLAN.md are complete, the build agent creates a
 
 **Both prompts should specify your source code path** (e.g., `lib/*`, `test/*`, `src/*`) so the agent knows where to look.
 
-### Patterns used in the prompts
+### loop/PROMPT_plan.codex.md
+
+Single-agent planning flow (no Task agents). Reads specs, plan, and code, then updates IMPLEMENTATION_PLAN.md and commits if needed.
+
+### loop/PROMPT_build.codex.md
+
+Single-agent build flow with self-review (no Task agents, no `/pr-review-toolkit`). Implements one task, validates via AGENTS.md, and commits.
+
+### Patterns used in the Claude prompts
 
 - **"don't assume not implemented"** — forces code search before writing new code
 - **"parallel Task agents"** — concurrent read-only work via the Task tool
