@@ -62,7 +62,7 @@ DEFAULT_LOG_DIR="loop/logs"
 DEFAULT_PROMPT_PLAN="loop/PROMPT_plan.claude.md"
 DEFAULT_PROMPT_BUILD="loop/PROMPT_build.claude.md"
 
-LOOP_CONFIG_FILE=${LOOP_CONFIG_FILE:-loop/config.ini}
+LOOP_CONFIG_FILE="loop/config.ini"
 PROFILE_CLI=""
 PROFILE_MODEL=""
 PROFILE_CLI_FLAGS=""
@@ -72,77 +72,77 @@ PROFILE_PROMPT_BUILD=""
 PROFILE_LOG_DIR=""
 PROFILE_FOUND=0
 
-if [ -f "$LOOP_CONFIG_FILE" ]; then
-    CURRENT_SECTION=""
-    while IFS= read -r line || [ -n "$line" ]; do
-        line="${line%%#*}"
-        line="${line%%;*}"
-        line="${line#"${line%%[![:space:]]*}"}"
-        line="${line%"${line##*[![:space:]]}"}"
-        [ -z "$line" ] && continue
-
-        if [[ "$line" =~ ^\[(.+)\]$ ]]; then
-            CURRENT_SECTION="${BASH_REMATCH[1]}"
-            if [ -n "$PROFILE" ] && [ "$CURRENT_SECTION" = "$PROFILE" ]; then
-                PROFILE_FOUND=1
-            fi
-            continue
-        fi
-
-        if [[ "$line" =~ ^([a-zA-Z_]+)[[:space:]]*=(.*)$ ]]; then
-            key="${BASH_REMATCH[1]}"
-            value="${BASH_REMATCH[2]}"
-            value="${value#"${value%%[![:space:]]*}"}"
-            value="${value%"${value##*[![:space:]]}"}"
-
-            if [ "$CURRENT_SECTION" = "defaults" ]; then
-                case "$key" in
-                    cli) DEFAULT_CLI="$value" ;;
-                    model) DEFAULT_MODEL="$value" ;;
-                    cli_flags) DEFAULT_CLI_FLAGS="$value" ;;
-                    reasoning_effort) DEFAULT_REASONING_EFFORT="$value" ;;
-                    max_turns)
-                        if ! is_number "$value"; then
-                            echo "Error: defaults.max_turns must be an integer"
-                            exit 1
-                        fi
-                        DEFAULT_MAX_TURNS="$value"
-                        ;;
-                    max_retries)
-                        if ! is_number "$value"; then
-                            echo "Error: defaults.max_retries must be an integer"
-                            exit 1
-                        fi
-                        DEFAULT_MAX_RETRIES="$value"
-                        ;;
-                    max_stalls)
-                        if ! is_number "$value"; then
-                            echo "Error: defaults.max_stalls must be an integer"
-                            exit 1
-                        fi
-                        DEFAULT_MAX_STALLS="$value"
-                        ;;
-                    log_dir) DEFAULT_LOG_DIR="$value" ;;
-                    prompt_plan) DEFAULT_PROMPT_PLAN="$value" ;;
-                    prompt_build) DEFAULT_PROMPT_BUILD="$value" ;;
-                esac
-            elif [ -n "$PROFILE" ] && [ "$CURRENT_SECTION" = "$PROFILE" ]; then
-                case "$key" in
-                    cli) PROFILE_CLI="$value" ;;
-                    model) PROFILE_MODEL="$value" ;;
-                    cli_flags) PROFILE_CLI_FLAGS="$value" ;;
-                    reasoning_effort) PROFILE_REASONING_EFFORT="$value" ;;
-                    prompt_plan) PROFILE_PROMPT_PLAN="$value" ;;
-                    prompt_build) PROFILE_PROMPT_BUILD="$value" ;;
-                    log_dir) PROFILE_LOG_DIR="$value" ;;
-                esac
-            fi
-        fi
-    done < "$LOOP_CONFIG_FILE"
-elif [ -n "$PROFILE" ]; then
+if [ ! -f "$LOOP_CONFIG_FILE" ]; then
     echo "Error: $LOOP_CONFIG_FILE not found"
     exit 1
 fi
+
+CURRENT_SECTION=""
+while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"
+    line="${line%%;*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -z "$line" ] && continue
+
+    if [[ "$line" =~ ^\[(.+)\]$ ]]; then
+        CURRENT_SECTION="${BASH_REMATCH[1]}"
+        if [ -n "$PROFILE" ] && [ "$CURRENT_SECTION" = "$PROFILE" ]; then
+            PROFILE_FOUND=1
+        fi
+        continue
+    fi
+
+    if [[ "$line" =~ ^([a-zA-Z_]+)[[:space:]]*=(.*)$ ]]; then
+        key="${BASH_REMATCH[1]}"
+        value="${BASH_REMATCH[2]}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+
+        if [ "$CURRENT_SECTION" = "defaults" ]; then
+            case "$key" in
+                cli) DEFAULT_CLI="$value" ;;
+                model) DEFAULT_MODEL="$value" ;;
+                cli_flags) DEFAULT_CLI_FLAGS="$value" ;;
+                reasoning_effort) DEFAULT_REASONING_EFFORT="$value" ;;
+                max_turns)
+                    if ! is_number "$value"; then
+                        echo "Error: defaults.max_turns must be an integer"
+                        exit 1
+                    fi
+                    DEFAULT_MAX_TURNS="$value"
+                    ;;
+                max_retries)
+                    if ! is_number "$value"; then
+                        echo "Error: defaults.max_retries must be an integer"
+                        exit 1
+                    fi
+                    DEFAULT_MAX_RETRIES="$value"
+                    ;;
+                max_stalls)
+                    if ! is_number "$value"; then
+                        echo "Error: defaults.max_stalls must be an integer"
+                        exit 1
+                    fi
+                    DEFAULT_MAX_STALLS="$value"
+                    ;;
+                log_dir) DEFAULT_LOG_DIR="$value" ;;
+                prompt_plan) DEFAULT_PROMPT_PLAN="$value" ;;
+                prompt_build) DEFAULT_PROMPT_BUILD="$value" ;;
+            esac
+        elif [ -n "$PROFILE" ] && [ "$CURRENT_SECTION" = "$PROFILE" ]; then
+            case "$key" in
+                cli) PROFILE_CLI="$value" ;;
+                model) PROFILE_MODEL="$value" ;;
+                cli_flags) PROFILE_CLI_FLAGS="$value" ;;
+                reasoning_effort) PROFILE_REASONING_EFFORT="$value" ;;
+                prompt_plan) PROFILE_PROMPT_PLAN="$value" ;;
+                prompt_build) PROFILE_PROMPT_BUILD="$value" ;;
+                log_dir) PROFILE_LOG_DIR="$value" ;;
+            esac
+        fi
+    fi
+done < "$LOOP_CONFIG_FILE"
 
 if [ -n "$PROFILE" ] && [ "$PROFILE_FOUND" -eq 0 ]; then
     echo "Error: profile '$PROFILE' not found in $LOOP_CONFIG_FILE"
@@ -168,24 +168,21 @@ fi
 
 ITERATION=0
 STALL_COUNT=0
-MAX_STALLS=${MAX_STALLS:-$DEFAULT_MAX_STALLS}
-MAX_TURNS=${MAX_TURNS:-$DEFAULT_MAX_TURNS}
-MAX_RETRIES=${MAX_RETRIES:-$DEFAULT_MAX_RETRIES}
-LOG_DIR=${LOG_DIR:-${PROFILE_LOG_DIR:-$DEFAULT_LOG_DIR}}
+MAX_STALLS=$DEFAULT_MAX_STALLS
+MAX_TURNS=$DEFAULT_MAX_TURNS
+MAX_RETRIES=$DEFAULT_MAX_RETRIES
+LOG_DIR=${PROFILE_LOG_DIR:-$DEFAULT_LOG_DIR}
 CURRENT_BRANCH=$(git branch --show-current)
 
-LOOP_CLI=${LOOP_CLI:-${PROFILE_CLI:-$DEFAULT_CLI}}
-LOOP_MODEL=${LOOP_MODEL:-${PROFILE_MODEL:-$DEFAULT_MODEL}}
-LOOP_CLI_FLAGS=${LOOP_CLI_FLAGS:-${PROFILE_CLI_FLAGS:-$DEFAULT_CLI_FLAGS}}
-LOOP_REASONING_EFFORT=${LOOP_REASONING_EFFORT:-${PROFILE_REASONING_EFFORT:-$DEFAULT_REASONING_EFFORT}}
+LOOP_CLI=${PROFILE_CLI:-$DEFAULT_CLI}
+LOOP_MODEL=${PROFILE_MODEL:-$DEFAULT_MODEL}
+LOOP_CLI_FLAGS=${PROFILE_CLI_FLAGS:-$DEFAULT_CLI_FLAGS}
+LOOP_REASONING_EFFORT=${PROFILE_REASONING_EFFORT:-$DEFAULT_REASONING_EFFORT}
 
 declare -a CLI_EXTRA_FLAGS=()
-if [ -n "${LOOP_CLI_FLAGS:-}" ]; then
+if [ -n "$LOOP_CLI_FLAGS" ]; then
     # shellcheck disable=SC2206
     CLI_EXTRA_FLAGS=($LOOP_CLI_FLAGS)
-elif [ -n "${PROFILE_CLI_FLAGS:-}" ]; then
-    # shellcheck disable=SC2206
-    CLI_EXTRA_FLAGS=($PROFILE_CLI_FLAGS)
 fi
 
 declare -a CLI_CONFIG_FLAGS=()

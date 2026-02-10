@@ -72,30 +72,18 @@ Each iteration gets a fresh context window — no degradation over long projects
 
 ### Choose the CLI (Claude or Codex)
 
-By default the loop runs `claude` (unless `loop/config.ini` overrides). To use Codex, set `LOOP_CLI=codex` or use a profile in `loop/config.ini`.
+By default the loop runs `claude` (per `loop/config.ini`). To use Codex, select a profile in `loop/config.ini`.
 
 ```bash
 # Claude (default)
 ./loop.sh
 
-# Codex
-LOOP_CLI=codex LOOP_MODEL=o3 ./loop.sh
-
-# Or via profile
+# Codex via profile
 ./loop.sh --profile codex-fast
 
-# Add extra CLI flags (applies to the selected CLI)
-LOOP_CLI=codex LOOP_CLI_FLAGS="--full-auto -s workspace-write" ./loop.sh
+# Claude via profile
+./loop.sh --profile claude-strong
 ```
-
-Environment variables:
-- `LOOP_CLI` — `claude` (default) or `codex` (or another CLI command on PATH)
-- `LOOP_MODEL` — model name passed to the CLI
-- `LOOP_CLI_FLAGS` — extra flags appended to the CLI invocation
-- `LOOP_REASONING_EFFORT` — reasoning effort passed to Codex (`low`, `medium`, `high`)
-- `LOOP_CONFIG_FILE` — override config path (default `loop/config.ini`)
-- `MAX_TURNS` — only used by the Claude CLI (default from config)
-- `MAX_RETRIES`, `MAX_STALLS`, `LOG_DIR` — override config defaults
 
 ### Profiles
 
@@ -128,20 +116,20 @@ prompt_plan=loop/PROMPT_plan.codex.md
 prompt_build=loop/PROMPT_build.codex.md
 ```
 
-Precedence (highest → lowest): explicit env vars, profile values, defaults, built-ins. Profiles can override prompt paths and log_dir.
+Precedence (highest → lowest): profile values, defaults, built-ins. Profiles can override prompt paths and log_dir.
 
 ### Multi-model workflow
 
-You can switch models between runs by setting `LOOP_MODEL` per command. This lets you use a faster/cheaper model for planning and a stronger model for building.
+You can switch models between runs by selecting different profiles. This lets you use a faster/cheaper model for planning and a stronger model for building.
 
 ```bash
 # Plan with a faster model, build with a stronger one
-LOOP_CLI=codex LOOP_MODEL=gpt-5.2-codex ./loop.sh plan 3
-LOOP_CLI=codex LOOP_MODEL=o3 ./loop.sh
+./loop.sh --profile codex-fast plan 3
+./loop.sh --profile claude-strong
 
 # Mix CLIs and models across runs
-LOOP_CLI=claude LOOP_MODEL=sonnet ./loop.sh plan
-LOOP_CLI=codex LOOP_MODEL=gpt-5.2-codex ./loop.sh 10
+./loop.sh --profile claude-strong plan
+./loop.sh --profile codex-fast 10
 ```
 
 ### Plan Refinement
@@ -161,8 +149,8 @@ Run `./loop.sh plan 3` for a well-refined plan. Diminishing returns after 3-4 it
 | `-p` | Headless mode (non-interactive) |
 | `--dangerously-skip-permissions` | Auto-approve tool calls |
 | `--output-format=stream-json` | JSON output for log parsing (not human-readable) |
-| `--model opus` | Complex reasoning (change to `sonnet` for speed) |
-| `--max-turns N` | Cap tool-use rounds per iteration (default 200, override with `MAX_TURNS` env var) |
+| `--model opus` | Complex reasoning (set via config/profile) |
+| `--max-turns N` | Cap tool-use rounds per iteration (set via config/profile) |
 | `--verbose` | Detailed execution logging |
 
 ### CLI Flags Used (Codex)
@@ -172,7 +160,7 @@ Run `./loop.sh plan 3` for a well-refined plan. Diminishing returns after 3-4 it
 | `exec` | Run Codex non-interactively |
 | `--dangerously-bypass-approvals-and-sandbox` | Skip approvals and sandboxing |
 | `--json` | Emit JSONL events to stdout |
-| `--model o3` | Select model (set via `LOOP_MODEL`) |
+| `--model o3` | Select model (set via config/profile) |
 
 Note: `--dangerously-bypass-approvals-and-sandbox` is only added when no `cli_flags` are set (to avoid conflicts with `--full-auto`).
 
@@ -284,7 +272,7 @@ The loop script uses **git commits as the progress signal**. If no new commit is
 | Claude CLI crash | API error, rate limit, or network failure | Retry with exponential backoff (30s, 60s, 90s); exits after 3 consecutive failures |
 | No progress (3 stalls) | Script exits with error (exit 1) after 3 consecutive no-commit iterations | Built into `loop.sh`; no action needed |
 | All tasks complete | Build agent creates `.loop-complete` sentinel file on disk; script detects it and exits cleanly (exit 0) | Built into `loop.sh` and build prompt |
-| Runaway iteration | Single iteration uses excessive tool calls | `--max-turns` caps rounds per iteration (default 200, override with `MAX_TURNS` env var) |
+| Runaway iteration | Single iteration uses excessive tool calls | `--max-turns` caps rounds per iteration (set via config/profile) |
 
 ## Safety
 
@@ -317,7 +305,7 @@ The plan is disposable. Regenerate when:
 3. **One task per iteration** — fresh context = full context window utilization
 4. **Plan is cheap** — run `./loop.sh plan 3` for a well-refined plan
 5. **Check logs when debugging** — each iteration writes to `loop/logs/` with timestamped JSON
-6. **Tune `MAX_TURNS`** — lower for simple projects (`MAX_TURNS=50 ./loop.sh`), keep high for complex ones
+6. **Tune `max_turns`** — lower for simple projects (edit `loop/config.ini`), keep high for complex ones
 
 ## References
 
