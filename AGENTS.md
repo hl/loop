@@ -2,6 +2,5 @@
 
 ## Validation
 
-- Compile: `mix compile --warnings-as-errors`
-- Format: `mix format --check-formatted`
-- Tests: `mix test`
+- HTML errors: `tidy -quiet -errors index.html`
+- Manual check: open `index.html` in a browser and verify rendering
