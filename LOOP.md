@@ -70,28 +70,14 @@ Each iteration gets a fresh context window — no degradation over long projects
 | `./loop.sh` | Building | loop/PROMPT_build.claude.md | Implement from plan (unlimited) |
 | `./loop.sh 20` | Building | loop/PROMPT_build.claude.md | Implement with max 20 iterations |
 
-Prompt files shown are the defaults. Profiles can override them (e.g., Codex profiles use the `.codex.md` prompts).
-### Choose the CLI (Claude or Codex)
-
-By default the loop runs `claude` (per `loop/config.ini`). To use Codex, select a profile in `loop/config.ini`.
-
-```bash
-# Claude (default)
-./loop.sh
-
-# Codex via profile
-./loop.sh --profile codex-fast
-
-# Claude via profile
-./loop.sh --profile claude-strong
-```
+Prompt files shown are the defaults. Profiles can override them.
 
 ### Profiles
 
 Use `--profile NAME` to load settings from `loop/config.ini`. This keeps friendly, reusable presets without relying on env vars.
 
 ```bash
-./loop.sh --profile codex-fast plan 3
+./loop.sh --profile claude-strong plan 3
 ./loop.sh --profile claude-strong 10
 ```
 
@@ -99,8 +85,7 @@ Use `--profile NAME` to load settings from `loop/config.ini`. This keeps friendl
 
 ```ini
 [defaults]
-cli=claude
-model=opus
+model=sonnet
 max_turns=200
 max_retries=3
 max_stalls=3
@@ -108,13 +93,8 @@ log_dir=loop/logs
 prompt_plan=loop/PROMPT_plan.claude.md
 prompt_build=loop/PROMPT_build.claude.md
 
-[codex-fast]
-cli=codex
-model=gpt-5.2-codex
-cli_flags=--full-auto -s workspace-write
-reasoning_effort=medium
-prompt_plan=loop/PROMPT_plan.codex.md
-prompt_build=loop/PROMPT_build.codex.md
+[claude-strong]
+model=opus
 ```
 
 Precedence (highest → lowest): profile values, defaults, built-ins. Profiles can override prompt paths and log_dir.
@@ -124,13 +104,9 @@ Precedence (highest → lowest): profile values, defaults, built-ins. Profiles c
 You can switch models between runs by selecting different profiles. This lets you use a faster/cheaper model for planning and a stronger model for building.
 
 ```bash
-# Plan with a faster model, build with a stronger one
-./loop.sh --profile codex-fast plan 3
+# Plan with defaults (sonnet), build with a stronger model
+./loop.sh plan 3
 ./loop.sh --profile claude-strong
-
-# Mix CLIs and models across runs
-./loop.sh --profile claude-strong plan
-./loop.sh --profile codex-fast 10
 ```
 
 ### Plan Refinement
@@ -143,7 +119,7 @@ Running the plan loop multiple times is intentional. Each iteration reviews the 
 
 Run `./loop.sh plan 3` for a well-refined plan. Diminishing returns after 3-4 iterations for most projects.
 
-### CLI Flags Used (Claude default)
+### CLI Flags
 
 | Flag | Purpose |
 | ---- | ------- |
@@ -154,24 +130,11 @@ Run `./loop.sh plan 3` for a well-refined plan. Diminishing returns after 3-4 it
 | `--max-turns N` | Cap tool-use rounds per iteration (set via config/profile) |
 | `--verbose` | Detailed execution logging |
 
-### CLI Flags Used (Codex)
-
-| Flag | Purpose |
-| ---- | ------- |
-| `exec` | Run Codex non-interactively |
-| `--dangerously-bypass-approvals-and-sandbox` | Skip approvals and sandboxing |
-| `--json` | Emit JSONL events to stdout |
-| `--model o3` | Select model (set via config/profile) |
-
-Note: `--dangerously-bypass-approvals-and-sandbox` is only added when no `cli_flags` are set (to avoid conflicts with `--full-auto`).
-
 ## Prerequisites
 
 1. **Prompt files** — Create before running:
-   - `loop/PROMPT_plan.claude.md` — Planning mode instructions (Claude)
-   - `loop/PROMPT_build.claude.md` — Building mode instructions (Claude)
-   - `loop/PROMPT_plan.codex.md` — Planning mode instructions (Codex)
-   - `loop/PROMPT_build.codex.md` — Building mode instructions (Codex)
+   - `loop/PROMPT_plan.claude.md` — Planning mode instructions
+   - `loop/PROMPT_build.claude.md` — Building mode instructions
 
 2. **Specs** — Requirements in `docs/specs/` (see [Writing Specs](#writing-specs))
 
@@ -184,10 +147,8 @@ Note: `--dangerously-bypass-approvals-and-sandbox` is only added when no `cli_fl
 ```text
 project-root/
 ├── loop.sh                    # Loop runner
-├── loop/PROMPT_build.claude.md # Building mode instructions (Claude)
-├── loop/PROMPT_plan.claude.md  # Planning mode instructions (Claude)
-├── loop/PROMPT_build.codex.md  # Building mode instructions (Codex)
-├── loop/PROMPT_plan.codex.md   # Planning mode instructions (Codex)
+├── loop/PROMPT_build.claude.md # Building mode instructions
+├── loop/PROMPT_plan.claude.md  # Planning mode instructions
 ├── AGENTS.md                  # Operational guide (build/test commands)
 ├── IMPLEMENTATION_PLAN.md     # Task list (generated)
 ├── loop/config.ini            # Loop config + profiles
@@ -212,7 +173,7 @@ Keep specs focused. A spec for "user authentication" and a separate spec for "pa
 
 ## Prompt Templates
 
-The prompts live in `loop/PROMPT_plan.claude.md` and `loop/PROMPT_build.claude.md` (Claude) and `loop/PROMPT_plan.codex.md` and `loop/PROMPT_build.codex.md` (Codex). Edit those files directly. Below is a summary of what each does and the patterns they use.
+The prompts live in `loop/PROMPT_plan.claude.md` and `loop/PROMPT_build.claude.md`. Edit those files directly. Below is a summary of what each does and the patterns they use.
 
 ### loop/PROMPT_plan.claude.md
 
@@ -243,15 +204,7 @@ When all tasks in IMPLEMENTATION_PLAN.md are complete, the build agent creates a
 
 **Both prompts should specify your source code path** (e.g., `lib/*`, `test/*`, `src/*`) so the agent knows where to look.
 
-### loop/PROMPT_plan.codex.md
-
-Single-agent planning flow (no Task agents). Reads specs, plan, and code, then updates IMPLEMENTATION_PLAN.md and commits if needed.
-
-### loop/PROMPT_build.codex.md
-
-Single-agent build flow with self-review (no Task agents, no `/pr-review-toolkit`). Implements one task, validates via AGENTS.md, and commits.
-
-### Patterns used in the Claude prompts
+### Patterns used in the prompts
 
 - **"don't assume not implemented"** — forces code search before writing new code
 - **"parallel Task agents"** — concurrent read-only work via the Task tool

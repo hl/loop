@@ -7,7 +7,7 @@ set -euo pipefail
 #   ./loop.sh 20           # Build mode, max 20 iterations
 #   ./loop.sh plan         # Plan mode, unlimited iterations
 #   ./loop.sh plan 5       # Plan mode, max 5 iterations
-#   ./loop.sh --profile codex-fast plan 3
+#   ./loop.sh --profile claude-strong plan 3
 
 # Verify git repo
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -51,10 +51,7 @@ is_number() {
     [[ "$1" =~ ^[0-9]+$ ]]
 }
 
-DEFAULT_CLI="claude"
 DEFAULT_MODEL="opus"
-DEFAULT_CLI_FLAGS=""
-DEFAULT_REASONING_EFFORT=""
 DEFAULT_MAX_TURNS=200
 DEFAULT_MAX_RETRIES=3
 DEFAULT_MAX_STALLS=3
@@ -63,10 +60,7 @@ DEFAULT_PROMPT_PLAN="loop/PROMPT_plan.claude.md"
 DEFAULT_PROMPT_BUILD="loop/PROMPT_build.claude.md"
 
 LOOP_CONFIG_FILE="loop/config.ini"
-PROFILE_CLI=""
 PROFILE_MODEL=""
-PROFILE_CLI_FLAGS=""
-PROFILE_REASONING_EFFORT=""
 PROFILE_PROMPT_PLAN=""
 PROFILE_PROMPT_BUILD=""
 PROFILE_LOG_DIR=""
@@ -101,10 +95,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 
         if [ "$CURRENT_SECTION" = "defaults" ]; then
             case "$key" in
-                cli) DEFAULT_CLI="$value" ;;
                 model) DEFAULT_MODEL="$value" ;;
-                cli_flags) DEFAULT_CLI_FLAGS="$value" ;;
-                reasoning_effort) DEFAULT_REASONING_EFFORT="$value" ;;
                 max_turns)
                     if ! is_number "$value"; then
                         echo "Error: defaults.max_turns must be an integer"
@@ -132,10 +123,7 @@ while IFS= read -r line || [ -n "$line" ]; do
             esac
         elif [ -n "$PROFILE" ] && [ "$CURRENT_SECTION" = "$PROFILE" ]; then
             case "$key" in
-                cli) PROFILE_CLI="$value" ;;
                 model) PROFILE_MODEL="$value" ;;
-                cli_flags) PROFILE_CLI_FLAGS="$value" ;;
-                reasoning_effort) PROFILE_REASONING_EFFORT="$value" ;;
                 prompt_plan) PROFILE_PROMPT_PLAN="$value" ;;
                 prompt_build) PROFILE_PROMPT_BUILD="$value" ;;
                 log_dir) PROFILE_LOG_DIR="$value" ;;
@@ -174,47 +162,14 @@ MAX_RETRIES=$DEFAULT_MAX_RETRIES
 LOG_DIR=${PROFILE_LOG_DIR:-$DEFAULT_LOG_DIR}
 CURRENT_BRANCH=$(git branch --show-current)
 
-LOOP_CLI=${PROFILE_CLI:-$DEFAULT_CLI}
 LOOP_MODEL=${PROFILE_MODEL:-$DEFAULT_MODEL}
-LOOP_CLI_FLAGS=${PROFILE_CLI_FLAGS:-$DEFAULT_CLI_FLAGS}
-LOOP_REASONING_EFFORT=${PROFILE_REASONING_EFFORT:-$DEFAULT_REASONING_EFFORT}
 
-declare -a CLI_EXTRA_FLAGS=()
-if [ -n "$LOOP_CLI_FLAGS" ]; then
-    # shellcheck disable=SC2206
-    CLI_EXTRA_FLAGS=($LOOP_CLI_FLAGS)
-fi
-
-declare -a CLI_CONFIG_FLAGS=()
-if [ -n "${LOOP_REASONING_EFFORT:-}" ]; then
-    CLI_CONFIG_FLAGS+=(-c "reasoning.effort=${LOOP_REASONING_EFFORT}")
-fi
-
-if ! command -v "$LOOP_CLI" >/dev/null 2>&1; then
-    echo "Error: $LOOP_CLI not found in PATH"
+if ! command -v claude >/dev/null 2>&1; then
+    echo "Error: claude not found in PATH"
     exit 1
 fi
 
-case "$LOOP_CLI" in
-    claude)
-        CLI_CMD=(claude -p --dangerously-skip-permissions --output-format=stream-json --model "$LOOP_MODEL" --max-turns "$MAX_TURNS" --verbose)
-        ;;
-    codex)
-        CLI_CMD=(codex exec --json --model "$LOOP_MODEL")
-        if [ ! "${CLI_EXTRA_FLAGS+x}" = "x" ] || [ ${#CLI_EXTRA_FLAGS[@]} -eq 0 ]; then
-            CLI_CMD+=(--dangerously-bypass-approvals-and-sandbox)
-        fi
-        if [ ${#CLI_CONFIG_FLAGS[@]} -gt 0 ]; then
-            CLI_CMD+=("${CLI_CONFIG_FLAGS[@]}")
-        fi
-        ;;
-    *)
-        CLI_CMD=("$LOOP_CLI")
-        ;;
-esac
-if [ "${CLI_EXTRA_FLAGS+x}" = "x" ] && [ ${#CLI_EXTRA_FLAGS[@]} -gt 0 ]; then
-    CLI_CMD+=("${CLI_EXTRA_FLAGS[@]}")
-fi
+CLI_CMD=(claude -p --dangerously-skip-permissions --output-format=stream-json --model "$LOOP_MODEL" --max-turns "$MAX_TURNS" --verbose)
 
 mkdir -p "$LOG_DIR"
 
@@ -228,14 +183,9 @@ if [ -n "$PROFILE" ]; then
 else
     echo "Profile:     none"
 fi
-echo "CLI:         $LOOP_CLI"
 echo "Model:       $LOOP_MODEL"
 [ "$MAX_ITERATIONS" -gt 0 ] && echo "Max:         $MAX_ITERATIONS iterations"
-if [ "$LOOP_CLI" = "claude" ]; then
-    echo "Max turns:   $MAX_TURNS per iteration"
-else
-    echo "Max turns:   n/a (Claude only)"
-fi
+echo "Max turns:   $MAX_TURNS per iteration"
 echo "Stall limit: $MAX_STALLS consecutive stalls"
 echo "Logs:        $LOG_DIR/"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
