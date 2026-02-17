@@ -1,4 +1,0 @@
-# AGENTS
-
-## Validation
-
