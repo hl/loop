@@ -34,6 +34,17 @@ done
 
 I=0
 while [ "$MAX" -eq 0 ] || [ "$I" -lt "$MAX" ]; do
+    if [ -f .loop-complete ]; then
+        echo "All tasks complete (.loop-complete found). Stopping."
+        rm -f .loop-complete
+        break
+    fi
+    if [ -f .loop-needs-approval ]; then
+        echo "Task needs human approval (.loop-needs-approval found):"
+        cat .loop-needs-approval
+        rm -f .loop-needs-approval
+        break
+    fi
     if [ -f "$PROMPT" ]; then
         claude -p --dangerously-skip-permissions --model "$MODEL" --max-turns "$MAX_TURNS" < "$PROMPT" || true
     else
