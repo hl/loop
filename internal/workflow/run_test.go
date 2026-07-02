@@ -249,6 +249,39 @@ func TestResumeIgnoresMismatchedWorkflowState(t *testing.T) {
 	}
 }
 
+func TestRunScrubsStaleSignalFilesAtEntry(t *testing.T) {
+	t.Chdir(t.TempDir())
+	// A stale .brr-complete survives a kill -9 of a previous run. Without the
+	// entry scrub, the failing command stage's post-Wait detection would see it
+	// and record the stage "completed", advancing past a failing gate.
+	if err := os.WriteFile(engine.SignalComplete, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: failCmd()}}, nil)
+
+	result, err := Run(Options{
+		Name:     "ship",
+		Workflow: wf,
+		Config:   testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) {
+			return name, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected the real command failure to surface, not a stale .brr-complete")
+	}
+	if result == nil || result.Reason == engine.ReasonComplete {
+		t.Fatalf("stale signal masked the failure, got %#v", result)
+	}
+	if _, statErr := os.Stat(engine.SignalComplete); statErr == nil {
+		t.Error("expected stale .brr-complete to be scrubbed at entry")
+	}
+	state := readState(t, "ship")
+	if state.Stages[0].Status != "error" {
+		t.Fatalf("expected failing stage status error, got %q", state.Stages[0].Status)
+	}
+}
+
 func TestRunCommandStageInterruptPreservesState(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.Interrupt signaling is not reliable for this process-level test on Windows")

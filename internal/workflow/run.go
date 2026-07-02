@@ -22,6 +22,13 @@ func Run(opts Options) (*engine.Result, error) {
 		return nil, err
 	}
 
+	// Scrub signal files left over from a previous run (e.g. after kill -9 or
+	// power loss, where engine.Run's deferred cleanup never ran). Command stages
+	// only inspect signal files after running and agent stages' engine.Run honors
+	// pre-existing signals — so a stale file would decide a stage's outcome before
+	// it even executes. Only regular files are removed (cleanupSignalFiles guards).
+	cleanupSignalFiles()
+
 	store := store{name: opts.Name}
 	if opts.Reset {
 		store.delete()
