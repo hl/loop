@@ -134,7 +134,21 @@ func run(cmd *cobra.Command, args []string) error {
 // trimming (prompt-resolution.md requirement 10); an empty result errors and
 // names the source it came from.
 func resolvePrompt(nameOrPath string) (string, error) {
-	text, source, err := resolvePromptText(nameOrPath)
+	return resolvePromptRestricted(nameOrPath, false)
+}
+
+// resolveWorkflowPrompt resolves a prompt referenced by a workflow stage. A
+// cloned repo's .brr/workflows/*.yaml is untrusted, so a workflow prompt must
+// not become an arbitrary file-read primitive (even `brr workflow validate`
+// reads it). Only named prompts and relative paths inside the working tree are
+// allowed; absolute paths and ".." traversal are rejected. Inline prompt text
+// still passes through.
+func resolveWorkflowPrompt(nameOrPath string) (string, error) {
+	return resolvePromptRestricted(nameOrPath, true)
+}
+
+func resolvePromptRestricted(nameOrPath string, restrict bool) (string, error) {
+	text, source, err := resolvePromptText(nameOrPath, restrict)
 	if err != nil {
 		return "", err
 	}
@@ -145,8 +159,13 @@ func resolvePrompt(nameOrPath string) (string, error) {
 }
 
 // resolvePromptText resolves nameOrPath to prompt text and a human-readable
-// description of where it came from, without checking emptiness.
-func resolvePromptText(nameOrPath string) (text, source string, err error) {
+// description of where it came from, without checking emptiness. When restrict
+// is set, path-like arguments that are absolute or escape the working tree via
+// ".." are rejected before any filesystem access (inline text is unaffected).
+func resolvePromptText(nameOrPath string, restrict bool) (text, source string, err error) {
+	if restrict && looksLikeFilePath(nameOrPath) && (filepath.IsAbs(nameOrPath) || hasDotDotSegment(nameOrPath)) {
+		return "", "", fmt.Errorf("workflow prompt %q must be a named prompt or a relative path inside the working tree (no absolute paths or \"..\")", nameOrPath)
+	}
 	// If it's an existing regular file, read it directly (rejects symlinks, FIFOs, etc.)
 	if fi, statErr := os.Lstat(nameOrPath); statErr == nil {
 		if fi.IsDir() {
@@ -225,6 +244,17 @@ func looksLikeFilePath(s string) bool {
 	}
 	// Without spaces: separator alone or recognized extension alone → file path
 	return hasSep || hasPromptExt
+}
+
+// hasDotDotSegment reports whether p contains a ".." path segment (as opposed to
+// ".." appearing inside a filename or inline text like "wait...").
+func hasDotDotSegment(p string) bool {
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == filepath.Separator }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func isPromptExtension(ext string) bool {

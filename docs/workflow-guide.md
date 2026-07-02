@@ -87,7 +87,7 @@ stages:                          # required — at least one
 
 - **Profile** (agent stages) resolves as: stage `profile` → `--profile` flag → `defaults.profile` → config default. A profile maps to a `command` + optional `args` in `.brr.yaml`.
 - **Effective max** (agent stages): stage `max` → `defaults.max`.
-- **Prompt**: an existing file path wins; otherwise `.brr/prompts/<name>.md`, then `<os-config-dir>/brr/prompts/<name>.md`; otherwise the value is used as inline prompt text. (See [`specs/prompt-resolution.md`](specs/prompt-resolution.md).)
+- **Prompt**: an existing file path wins; otherwise `.brr/prompts/<name>.md`, then `<os-config-dir>/brr/prompts/<name>.md`; otherwise the value is used as inline prompt text. (See [`specs/prompt-resolution.md`](specs/prompt-resolution.md).) A workflow stage's `prompt` may only reference a named prompt or a relative path **inside the working tree** — absolute paths and `..` traversal are rejected (a cloned workflow file is untrusted and must not read out-of-tree files). Must resolve to non-empty text.
 
 ---
 

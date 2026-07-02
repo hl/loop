@@ -28,7 +28,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | C3 | low | confirmed | cli | `--notify` skipped for `.brr-cycle` stop in root command | open |
 | F3 | low | likely | notify | notify-send body starting with `-` parsed as options (Linux) | open |
 | F4 | low | likely | scaffold | Init stage-2 TOCTOU: `.brr` parent symlink not re-verified | open |
-| X1 | low | confirmed | security | Workflow `prompt:` allows arbitrary out-of-tree file read | open |
+| X1 | low | confirmed | security | Workflow `prompt:` allows arbitrary out-of-tree file read | fixed |
 | X2 | low | confirmed | security | Unbounded `ReadRegularFile` enables OOM via planted files | open |
 
 ---

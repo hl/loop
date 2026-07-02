@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Workflow stage `prompt:` values are now resolved through a restricted resolver: only named prompts and relative paths inside the working tree are allowed; absolute paths and `..` traversal are rejected. A cloned repo's `.brr/workflows/*.yaml` is untrusted, so it could previously read any absolute or `../`-traversing file (up to 10 MiB) into the agent's stdin — and `brr workflow validate` would read it too, doubling as a file-existence oracle. The root `brr <prompt>` argument keeps its permissive behavior (the user typed it).
+
 ### Fixed
 
 - An empty resolved prompt is now rejected for workflow agent stages, by `brr workflow run` and `brr workflow validate`, not just `brr run`. The non-empty check moved into `resolvePrompt` itself (naming the resolved source — file path or inline text), so an empty `.brr/prompts/<name>.md` no longer validates cleanly and then loops an instruction-less agent.

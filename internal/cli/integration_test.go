@@ -348,6 +348,34 @@ func TestWorkflowValidateRejectsEmptyPrompt(t *testing.T) {
 	}
 }
 
+func TestWorkflowValidateRejectsAbsolutePrompt(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestConfig(t)
+	secret := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(secret, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(".brr", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := fmt.Sprintf("version: 2\ndefaults: {max: 1}\nstages:\n  - id: build\n    type: agent\n    prompt: %q\n", secret)
+	if err := os.WriteFile(filepath.Join(".brr", "workflows", "ship.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// `brr workflow validate` reads the stage prompt today, so the restriction
+	// must also close the file-existence oracle it would otherwise expose.
+	cmd := newTestWorkflowValidateCmd()
+	cmd.SetArgs([]string{"ship"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected validate to reject an absolute stage prompt path")
+	}
+	if !strings.Contains(err.Error(), "working tree") {
+		t.Fatalf("expected working-tree restriction error, got: %v", err)
+	}
+}
+
 func TestWorkflowRunIntegration(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t)

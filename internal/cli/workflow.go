@@ -129,7 +129,7 @@ func runWorkflow(cmd *cobra.Command, args []string) error {
 		Workflow:      wf,
 		Config:        cfg,
 		ProfileFlag:   profileFlag,
-		ResolvePrompt: resolvePrompt,
+		ResolvePrompt: resolveWorkflowPrompt,
 		Notify:        notifyFn,
 		Reset:         reset,
 	})
@@ -235,7 +235,7 @@ func loadWorkflowForRun(cmd *cobra.Command, name string, resolvePrompts bool) (w
 	}
 	var resolver func(string) (string, error)
 	if resolvePrompts {
-		resolver = resolvePrompt
+		resolver = resolveWorkflowPrompt
 	}
 	if err := workflow.ValidateRuntime(wf, cfg, profileFlag, resolver); err != nil {
 		return workflow.Workflow{}, config.Config{}, "", err
