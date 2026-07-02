@@ -23,7 +23,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | W3 | low | confirmed | workflow | Duplicate `workflow_started` events on resume | fixed |
 | W4 | low | confirmed | workflow | Negative per-stage `max` silently falls back to default | fixed |
 | S4 | low | confirmed | workflow | WatchStatus wipes final frame when state file vanishes | fixed |
-| S5 | low | confirmed | workflow | Run diagram always draws cycle edge from last stage | open |
+| S5 | low | confirmed | workflow | Run diagram always draws cycle edge from last stage | fixed |
 | S6 | low | likely | workflow | atomicWriteRegularFile renames without fsync | open |
 | C3 | low | confirmed | cli | `--notify` skipped for `.brr-cycle` stop in root command | open |
 | F3 | low | likely | notify | notify-send body starting with `-` parsed as options (Linux) | open |

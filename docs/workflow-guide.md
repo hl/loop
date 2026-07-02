@@ -153,7 +153,7 @@ Read it as a sentence: turn `REQUIREMENTS.md` into a **spec**, draft a **plan**,
   cycle:   build (max 3)
 
   flow: ✓ spec → ✓ plan → ▶ build → ○ check → ○ verify → ○ review
-  cycle: review ↺ build (max 3, used 0)
+  cycle: ↺ build (max 3, used 0)
 
 ━━━ Stage 3/6 — build ▸ build (max 100) ━━━
 ```

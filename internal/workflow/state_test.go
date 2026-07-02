@@ -164,10 +164,15 @@ func TestRunDiagramShowsFlowAndCycleState(t *testing.T) {
 		t.Fatalf("run diagram error: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"flow:", "✓ build", "* check", "○ review", "review ↺ build", "used 1"} {
+	for _, want := range []string{"flow:", "✓ build", "* check", "○ review", "↺ build", "used 1"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in run diagram:\n%s", want, got)
 		}
+	}
+	// The cycle target here is the first stage ("build"), so the diagram must not
+	// claim the last stage ("review") is the one looping back.
+	if strings.Contains(got, "review ↺") {
+		t.Fatalf("cycle edge must not be sourced from the last stage:\n%s", got)
 	}
 }
 
