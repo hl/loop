@@ -76,6 +76,74 @@ func TestStatusFrameUsesSpinnerForRunningStage(t *testing.T) {
 	}
 }
 
+func TestWatchStatusKeepsFinalFrameWhenStateVanishes(t *testing.T) {
+	t.Chdir(t.TempDir())
+	(store{name: "ship"}).save(&State{
+		SchemaVersion: SchemaVersion,
+		Workflow:      "ship",
+		RunID:         "abc",
+		NextStageID:   "build",
+		Stages: []StageStatus{
+			{ID: "build", Type: StageTypeCommand, Status: "completed", Command: []string{"make", "check"}},
+		},
+	})
+
+	var out strings.Builder
+	sw := &statusWatcher{name: "ship", w: &out}
+
+	// Tick 1: state present → renders a frame.
+	if done, err := sw.tick(); err != nil || done {
+		t.Fatalf("first tick: done=%v err=%v", done, err)
+	}
+	if !strings.Contains(out.String(), "ship") {
+		t.Fatalf("expected a rendered frame, got:\n%s", out.String())
+	}
+
+	// State vanishes (workflow completion / --reset window).
+	(store{name: "ship"}).delete()
+
+	// Tick 2: the first absent tick is tolerated, keeping the last frame.
+	if done, err := sw.tick(); err != nil || done {
+		t.Fatalf("watcher must tolerate one absent tick: done=%v err=%v", done, err)
+	}
+	before := out.String()
+
+	// Tick 3: still absent → conclude without wiping the final frame.
+	done, err := sw.tick()
+	if err != nil {
+		t.Fatalf("third tick error: %v", err)
+	}
+	if !done {
+		t.Fatal("expected watcher to conclude after a second absent tick")
+	}
+	final := out.String()
+	if strings.Contains(final, "No state found") {
+		t.Fatalf("must not replace the final frame with a no-state message:\n%s", final)
+	}
+	if !strings.Contains(final, "state cleared") {
+		t.Fatalf("expected a closing 'state cleared' line, got:\n%s", final)
+	}
+	if strings.Contains(strings.TrimPrefix(final, before), "\033[2J") {
+		t.Fatalf("closing tick must not clear the screen: %q", strings.TrimPrefix(final, before))
+	}
+}
+
+func TestWatchStatusReportsNoStateWhenNeverSeen(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out strings.Builder
+	sw := &statusWatcher{name: "ship", w: &out}
+	done, err := sw.tick()
+	if err != nil {
+		t.Fatalf("tick error: %v", err)
+	}
+	if !done {
+		t.Fatal("expected watcher to conclude when no state ever existed")
+	}
+	if !strings.Contains(out.String(), "No state found") {
+		t.Fatalf("expected no-state message, got:\n%s", out.String())
+	}
+}
+
 func TestRunDiagramShowsFlowAndCycleState(t *testing.T) {
 	wf := testWorkflow([]Stage{
 		{ID: "build", Type: StageTypeAgent, Prompt: "build"},
