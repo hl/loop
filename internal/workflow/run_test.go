@@ -254,6 +254,89 @@ func TestResumeIgnoresMismatchedWorkflowState(t *testing.T) {
 	}
 }
 
+func TestFreshRunEmitsStartedEvent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	// The gate fails, preserving the event log so it can be inspected.
+	wf := testWorkflow([]Stage{{ID: "gate", Type: StageTypeCommand, Command: failCmd()}}, nil)
+
+	_, err := Run(Options{
+		Name:          "ship",
+		Workflow:      wf,
+		Config:        testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) { return name, nil },
+	})
+	if err == nil {
+		t.Fatal("expected the gate stage to fail")
+	}
+
+	var started, resumed int
+	for _, e := range readEvents(t, "ship") {
+		switch e.Type {
+		case "workflow_started":
+			started++
+		case "workflow_resumed":
+			resumed++
+		}
+	}
+	if started != 1 {
+		t.Fatalf("expected exactly one workflow_started on a fresh run, got %d", started)
+	}
+	if resumed != 0 {
+		t.Fatalf("fresh run must not emit workflow_resumed, got %d", resumed)
+	}
+}
+
+func TestResumeEmitsResumedEventNotStarted(t *testing.T) {
+	t.Chdir(t.TempDir())
+	wf := testWorkflow([]Stage{
+		{ID: "first", Type: StageTypeAgent, Prompt: "first", Max: 1},
+		{ID: "gate", Type: StageTypeCommand, Command: failCmd()},
+	}, nil)
+	// Pre-save state so the run resumes at the command gate. The gate fails,
+	// which preserves the event log for inspection.
+	state := &State{
+		SchemaVersion: SchemaVersion,
+		Workflow:      "ship",
+		RunID:         "abc",
+		StartedAt:     testTime(),
+		UpdatedAt:     testTime(),
+		NextStageID:   "gate",
+		Stages:        initialStageStatus(wf),
+	}
+	(store{name: "ship"}).save(state)
+
+	_, err := Run(Options{
+		Name:          "ship",
+		Workflow:      wf,
+		Config:        testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) { return name + "\n", nil },
+	})
+	if err == nil {
+		t.Fatal("expected the resumed gate stage to fail")
+	}
+
+	var started, resumed int
+	var resumedStage string
+	for _, e := range readEvents(t, "ship") {
+		switch e.Type {
+		case "workflow_started":
+			started++
+		case "workflow_resumed":
+			resumed++
+			resumedStage = e.StageID
+		}
+	}
+	if started != 0 {
+		t.Fatalf("resume must not emit workflow_started, got %d", started)
+	}
+	if resumed != 1 {
+		t.Fatalf("expected exactly one workflow_resumed, got %d", resumed)
+	}
+	if resumedStage != "gate" {
+		t.Fatalf("expected workflow_resumed to name stage %q, got %q", "gate", resumedStage)
+	}
+}
+
 func TestRunCommandStageDoesNotForwardSIGINT(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGINT process-group semantics are POSIX-specific")

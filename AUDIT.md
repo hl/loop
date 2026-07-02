@@ -20,7 +20,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | E2 | low | confirmed | engine | Signals during Start→publish window dropped yet consume escalation level | fixed |
 | E3 | low | likely | engine | Windows terminateTree can recurse infinitely on PID cycles | fixed |
 | W2 | low | confirmed | workflow | Single command failure recorded as `fail_streak` | fixed |
-| W3 | low | confirmed | workflow | Duplicate `workflow_started` events on resume | open |
+| W3 | low | confirmed | workflow | Duplicate `workflow_started` events on resume | fixed |
 | W4 | low | confirmed | workflow | Negative per-stage `max` silently falls back to default | open |
 | S4 | low | confirmed | workflow | WatchStatus wipes final frame when state file vanishes | open |
 | S5 | low | confirmed | workflow | Run diagram always draws cycle edge from last stage | open |

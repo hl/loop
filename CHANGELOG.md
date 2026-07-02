@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Resuming a workflow no longer appends a duplicate `workflow_started` event. A resume reuses the original run id, so the event log used to show one run "started" several times with no way to tell resumes apart. brr now emits a distinct `workflow_resumed` event (carrying the stage id the run picks up from) on the resume path, and `workflow_started` only for fresh runs.
+
 - An interrupt (Ctrl+C / SIGTERM) now reliably stops the run even when the same iteration produced a signal file or reached the iteration limit. Previously a Ctrl+C during a stage that had already written `.brr-cycle` returned a cycle (the workflow looped back and kept running), and a Ctrl+C on an agent stage's final iteration returned max-iterations (the workflow silently advanced). The engine and the command stage now check the interrupt first, so both stop with exit 130 and preserved state per the workflow spec.
 - Ctrl+C during a workflow command stage is no longer intermittently misreported as a stage failure. brr now drains any signal left buffered when the child exits, and classifies a child that died from SIGINT/SIGTERM (via its wait status) as an interrupt — so the stage is consistently recorded "interrupted" with exit 130 instead of "error".
 - Ctrl+C during a workflow command stage no longer double-interrupts the child. The child shares brr's foreground process group, so the terminal already delivers the interrupt; brr no longer re-sends SIGINT (which made tools with escalating interrupt semantics — pytest, npm, coding agents — hard-abort). SIGTERM, which is not tty-broadcast, is still forwarded.

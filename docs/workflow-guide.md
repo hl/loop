@@ -203,7 +203,7 @@ Signal files (`.brr-complete`, `.brr-failed`, `.brr-needs-approval`, `.brr-cycle
 Progress lives under `.brr/state/workflows/`:
 
 - `<name>.json` — resume state: `schema_version`, `workflow`, `run_id`, `started_at`, `updated_at`, `start_sha`, `next_stage_id`, `cycle_count`, and a per-stage status entry (status, reason, duration, prompt/profile/command metadata).
-- `<name>.events.jsonl` — append-only event log: `workflow_started`, `stage_started`, `stage_finished`, `cycle`, `cycle_skipped`, `workflow_error`, `workflow_complete`.
+- `<name>.events.jsonl` — append-only event log: `workflow_started` (fresh run) or `workflow_resumed` (resume, with the stage id it picks up from), `stage_started`, `stage_finished`, `cycle`, `cycle_skipped`, `workflow_error`, `workflow_complete`.
 
 Both are runtime state — `brr init` gitignores `.brr/state/`. Writes reject symlinks and other non-regular files.
 

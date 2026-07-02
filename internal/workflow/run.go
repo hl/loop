@@ -33,10 +33,18 @@ func Run(opts Options) (*engine.Result, error) {
 	if opts.Reset {
 		store.delete()
 	}
-	stageIdx, state := initialRunState(opts, store)
+	stageIdx, state, resumed := initialRunState(opts, store)
 
 	printWorkflowSummary(opts.Workflow, opts.Name)
-	store.appendEvent(Event{RunID: state.RunID, Workflow: opts.Name, Time: time.Now().UTC(), Type: "workflow_started"})
+	startEvent := Event{RunID: state.RunID, Workflow: opts.Name, Time: time.Now().UTC(), Type: "workflow_started"}
+	if resumed {
+		// A resume reuses the original RunID; emitting workflow_started again would
+		// make the event log show one run "started" N times. Record it as a distinct
+		// workflow_resumed carrying the stage the run picks up from.
+		startEvent.Type = "workflow_resumed"
+		startEvent.StageID = state.NextStageID
+	}
+	store.appendEvent(startEvent)
 	store.save(state)
 	printRunDiagram(opts.Workflow, state, "")
 
@@ -73,7 +81,7 @@ func Run(opts Options) (*engine.Result, error) {
 	return &engine.Result{Reason: engine.ReasonComplete}, nil
 }
 
-func initialRunState(opts Options, store store) (int, *State) {
+func initialRunState(opts Options, store store) (int, *State, bool) {
 	now := time.Now().UTC()
 	state := &State{
 		SchemaVersion: SchemaVersion,
@@ -93,7 +101,7 @@ func initialRunState(opts Options, store store) (int, *State) {
 				fmt.Fprintf(os.Stderr, " (cycle %d)", saved.CycleCount)
 			}
 			fmt.Fprintln(os.Stderr)
-			return stageIndexByID(opts.Workflow, saved.NextStageID), saved
+			return stageIndexByID(opts.Workflow, saved.NextStageID), saved, true
 		}
 	}
 	detail := "no saved state"
@@ -101,7 +109,7 @@ func initialRunState(opts Options, store store) (int, *State) {
 		detail = "discarded saved state"
 	}
 	fmt.Fprintf(os.Stderr, "  %sstarting fresh:%s %s\n", ui.Dim, ui.Reset, detail)
-	return 0, state
+	return 0, state, false
 }
 
 func handleStageResult(opts Options, state *State, store store, stage Stage, result *engine.Result) (int, bool, error) {
