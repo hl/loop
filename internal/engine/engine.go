@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -113,9 +114,14 @@ func Run(opts Options) (*Result, error) {
 	defer func() { removeIfRegular(SignalNeedsApproval) }()
 	defer func() { removeIfRegular(SignalCycle) }()
 
-	// Track the currently running subprocess so we can forward signals
+	// Track the currently running subprocess so we can forward signals.
+	// pendingSigINT/pendingSigTERM record signals that arrive while currentCmd
+	// is nil (the window between cmd.Start() and publication); they are all
+	// guarded by mu so the publish and the record decision are serialized.
 	var mu sync.Mutex
 	var currentCmd *exec.Cmd
+	var pendingSigINT int // highest SIGINT escalation level seen with no child (2=INT, 3=KILL)
+	var pendingSigTERM bool
 
 	// Signal handling: three levels
 	// 1st Ctrl+C: finish current iteration, then stop
@@ -142,8 +148,12 @@ func Run(opts Options) (*Result, error) {
 					stopping.Store(true)
 					mu.Lock()
 					cmd := currentCmd
-					mu.Unlock()
-					if cmd != nil && cmd.Process != nil {
+					if cmd == nil || cmd.Process == nil {
+						// No child yet — record so the publisher forwards it.
+						pendingSigTERM = true
+						mu.Unlock()
+					} else {
+						mu.Unlock()
 						if err := killGroup(cmd, sigTERM); err != nil {
 							fmt.Fprintf(os.Stderr, "warning: failed to forward SIGTERM to child: %v\n", err)
 						}
@@ -162,8 +172,13 @@ func Run(opts Options) (*Result, error) {
 				case 2:
 					mu.Lock()
 					cmd := currentCmd
-					mu.Unlock()
-					if cmd != nil && cmd.Process != nil {
+					if cmd == nil || cmd.Process == nil {
+						if pendingSigINT < 2 {
+							pendingSigINT = 2
+						}
+						mu.Unlock()
+					} else {
+						mu.Unlock()
 						if err := killGroup(cmd, sigINT); err != nil {
 							fmt.Fprintf(os.Stderr, "warning: failed to interrupt child: %v\n", err)
 						}
@@ -171,8 +186,11 @@ func Run(opts Options) (*Result, error) {
 				default:
 					mu.Lock()
 					cmd := currentCmd
-					mu.Unlock()
-					if cmd != nil && cmd.Process != nil {
+					if cmd == nil || cmd.Process == nil {
+						pendingSigINT = 3
+						mu.Unlock()
+					} else {
+						mu.Unlock()
 						if err := killGroup(cmd, sigKILL); err != nil {
 							fmt.Fprintf(os.Stderr, "warning: failed to force-kill child: %v\n", err)
 						}
@@ -244,7 +262,20 @@ func Run(opts Options) (*Result, error) {
 
 		mu.Lock()
 		currentCmd = cmd
+		// Reconcile signals that arrived during the Start→publish window: the
+		// handler saw currentCmd == nil and recorded them instead of forwarding.
+		// Reading and clearing under the same lock as the publish guarantees
+		// exactly-once delivery with the handler (no drop, no double-send).
+		pInt := pendingSigINT
+		pTerm := pendingSigTERM
+		pendingSigINT = 0
+		pendingSigTERM = false
 		mu.Unlock()
+		for _, sig := range pendingSignalsToForward(pInt, pTerm) {
+			if err := killGroup(cmd, sig); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to forward pending signal to child: %v\n", err)
+			}
+		}
 
 		err := cmd.Wait()
 
@@ -309,6 +340,26 @@ func Run(opts Options) (*Result, error) {
 		return &Result{Reason: ReasonMaxIterations}, fmt.Errorf("last iteration failed: %w", lastErr)
 	}
 	return &Result{Reason: ReasonMaxIterations}, nil
+}
+
+// pendingSignalsToForward returns, in delivery order, the signals that must be
+// forwarded to a freshly-published child to make up for signals that arrived
+// during the Start→publish window (when the handler saw a nil child). SIGTERM,
+// if seen, is delivered first; then the highest SIGINT escalation level reached
+// (SIGINT at level 2, SIGKILL at level 3). This preserves the graceful-interrupt
+// escalation instead of letting a dropped level-2 SIGINT skip straight to KILL.
+func pendingSignalsToForward(pendingINT int, pendingTERM bool) []syscall.Signal {
+	var sigs []syscall.Signal
+	if pendingTERM {
+		sigs = append(sigs, sigTERM)
+	}
+	switch {
+	case pendingINT >= 3:
+		sigs = append(sigs, sigKILL)
+	case pendingINT == 2:
+		sigs = append(sigs, sigINT)
+	}
+	return sigs
 }
 
 // removeIfRegular removes path only if it is a regular file.

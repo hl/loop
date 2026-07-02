@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -145,6 +146,38 @@ func TestRunFailStreakDirtyTree(t *testing.T) {
 			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 			if len(lines) != tt.wantIters {
 				t.Errorf("expected %d iterations, got %d", tt.wantIters, len(lines))
+			}
+		})
+	}
+}
+
+func TestPendingSignalsToForward(t *testing.T) {
+	tests := []struct {
+		name       string
+		pendingINT int
+		pendingTRM bool
+		want       []syscall.Signal
+	}{
+		{"nothing pending", 0, false, nil},
+		// The E2 regression: a level-2 SIGINT that landed in the Start→publish
+		// window must still reach the child as SIGINT, not be dropped so a later
+		// press jumps straight to SIGKILL.
+		{"level-2 SIGINT forwarded", 2, false, []syscall.Signal{sigINT}},
+		{"level-3 escalates to KILL", 3, false, []syscall.Signal{sigKILL}},
+		{"SIGTERM only", 0, true, []syscall.Signal{sigTERM}},
+		{"SIGTERM before SIGINT", 2, true, []syscall.Signal{sigTERM, sigINT}},
+		{"SIGTERM before KILL", 3, true, []syscall.Signal{sigTERM, sigKILL}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pendingSignalsToForward(tt.pendingINT, tt.pendingTRM)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
 			}
 		})
 	}

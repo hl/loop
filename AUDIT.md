@@ -17,7 +17,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | C1 | medium | confirmed | cli | Empty resolved prompt accepted for workflow agent stages | open |
 | C2 | medium | confirmed | cli | Workflow error notifications misreport the terminal event | open |
 | F2 | medium | confirmed | config | Project profile deep-merges with same-named global profile | open |
-| E2 | low | confirmed | engine | Signals during Start→publish window dropped yet consume escalation level | open |
+| E2 | low | confirmed | engine | Signals during Start→publish window dropped yet consume escalation level | fixed |
 | E3 | low | likely | engine | Windows terminateTree can recurse infinitely on PID cycles | open |
 | W2 | low | confirmed | workflow | Single command failure recorded as `fail_streak` | open |
 | W3 | low | confirmed | workflow | Duplicate `workflow_started` events on resume | open |

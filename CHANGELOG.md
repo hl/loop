@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Signals that arrive in the brief window between spawning an iteration's child and publishing it are no longer dropped. Previously a second Ctrl+C landing in that window incremented the escalation counter without reaching the child, so a third press jumped straight to SIGKILL and skipped the graceful interrupt; a SIGTERM in the window printed "forwarding" but never delivered. The engine now records such signals and forwards them (SIGTERM, then the reached SIGINT/SIGKILL level) as soon as the child is published.
 - The fail-streak circuit breaker is no longer permanently disabled by a dirty working tree. The engine now snapshots the tree before each iteration and only resets the streak when the tree actually *changed* during a failing iteration (real progress). A tree that is merely dirty but unchanged — the normal state when running a coding agent — now counts toward the streak, so a deterministically failing agent stops after three attempts instead of respawning forever.
 - `brr run` with `--max` no longer exits as a failure when an earlier iteration failed but the final iteration succeeded. The engine now clears the tracked last error on a successful iteration, so the "last iteration failed" error is only returned when the final iteration actually fails. This also prevents workflow stages from aborting with status "error" after a successful recovery.
 
