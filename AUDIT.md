@@ -27,7 +27,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | S6 | low | likely | workflow | atomicWriteRegularFile renames without fsync | fixed |
 | C3 | low | confirmed | cli | `--notify` skipped for `.brr-cycle` stop in root command | fixed |
 | F3 | low | likely | notify | notify-send body starting with `-` parsed as options (Linux) | fixed |
-| F4 | low | likely | scaffold | Init stage-2 TOCTOU: `.brr` parent symlink not re-verified | open |
+| F4 | low | likely | scaffold | Init stage-2 TOCTOU: `.brr` parent symlink not re-verified | fixed |
 | X1 | low | confirmed | security | Workflow `prompt:` allows arbitrary out-of-tree file read | fixed |
 | X2 | low | confirmed | security | Unbounded `ReadRegularFile` enables OOM via planted files | open |
 

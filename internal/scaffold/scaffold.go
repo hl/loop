@@ -58,7 +58,17 @@ func Init(force bool) error {
 		return err
 	}
 
-	// Stage 2: create .brr/prompts/, .brr/workflows/, and .brr/state/
+	// Stage 2: create .brr/prompts/, .brr/workflows/, and .brr/state/.
+	// Re-verify the .brr parent itself, not just the leaf dirs: MkdirAll and the
+	// leaf Lstat both follow a symlinked intermediate .brr, so a .brr -> elsewhere
+	// swap slipped in after pre-flight would otherwise redirect the whole tree
+	// (and later state writes) outside the repo.
+	if err := rejectSymlink(".brr"); err != nil {
+		if rErr := restoreFile(".brr.yaml", rb.yamlData, rb.yamlMode, rb.yamlExisted); rErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: rollback of .brr.yaml failed: %v\n", rErr)
+		}
+		return err
+	}
 	if err := rejectSymlink(rb.promptDir); err != nil {
 		if rErr := restoreFile(".brr.yaml", rb.yamlData, rb.yamlMode, rb.yamlExisted); rErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: rollback of .brr.yaml failed: %v\n", rErr)

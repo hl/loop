@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `brr init` now re-verifies the `.brr` parent directory (not just the leaf `.brr/prompts`) before creating the project tree in stage 2. `MkdirAll` and the leaf symlink check both follow a symlinked intermediate `.brr`, so a `.brr -> elsewhere` swap slipped in after pre-flight could redirect the created directories — and later state writes — outside the repository. The parent is now rejected as a symlink at the stage boundary, closing that race window.
+
 - Linux desktop notifications whose title or body begins with `-` now render. The agent-controlled text was passed as positional argv to `notify-send`, which parses options anywhere in argv (GOption), so a body like `--version mismatch...` was swallowed as an option and the notification silently did not appear. brr now inserts a `--` option terminator before the positional arguments.
 
 - A project `.brr.yaml` profile no longer deep-merges with a same-named global profile. Config layers are now unmarshalled separately and merged with whole-profile replacement, so a project profile that sets `command` but omits `args` no longer silently inherits the global profile's args (e.g. `--dangerously-skip-permissions --model opus` leaking into a command that never asked for them). Profiles from different names still combine across layers.
