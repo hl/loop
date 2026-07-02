@@ -17,11 +17,18 @@ import (
 	"github.com/hl/brr/internal/ui"
 )
 
-// gitTreeDirty reports whether the git working tree has uncommitted changes.
-// Returns false if git is not available or the directory is not a repository.
-var gitTreeDirty = func() bool {
+// gitTreeSnapshot returns an opaque fingerprint of the git working tree state
+// (the `git status --porcelain` output). Callers only compare successive
+// snapshots for equality to detect whether the tree changed. The second return
+// value is false if git is not available or the directory is not a repository,
+// in which case progress cannot be detected and failures are counted normally.
+// It is a package-level var so tests can stub the tree state.
+var gitTreeSnapshot = func() (string, bool) {
 	out, err := exec.Command("git", "status", "--porcelain").Output()
-	return err == nil && len(strings.TrimSpace(string(out))) > 0
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
 }
 
 const maxApprovalFileSize = 4096
@@ -203,6 +210,10 @@ func Run(opts Options) (*Result, error) {
 			ui.Dim, time.Now().Format("15:04:05"), ui.Reset,
 		)
 
+		// Snapshot the working tree before the iteration so we can tell whether
+		// the agent made progress (changed the tree) if the command later fails.
+		treeBefore, treeTracked := gitTreeSnapshot()
+
 		// Run the command with prompt piped to stdin.
 		cmd := exec.Command(opts.Command[0], opts.Command[1:]...)
 		cmd.Stdin = strings.NewReader(opts.Prompt)
@@ -262,12 +273,17 @@ func Run(opts Options) (*Result, error) {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				rc = exitErr.ExitCode()
 			}
-			// If the working tree is dirty, the agent made progress before crashing
-			// (e.g. context exhaustion, timeout). Don't count it toward the fail streak —
-			// the next iteration's recovery phase will pick up where it left off.
-			if gitTreeDirty() {
+			// If the working tree *changed* during this iteration, the agent made
+			// progress before crashing (e.g. context exhaustion, timeout). Don't
+			// count it toward the fail streak — the next iteration's recovery phase
+			// will pick up where it left off. A tree that is merely dirty but
+			// unchanged (pre-existing edits, a deterministic no-op failure) still
+			// counts, so the fail-streak breaker cannot be permanently disabled.
+			treeAfter, treeTrackedAfter := gitTreeSnapshot()
+			progressed := treeTracked && treeTrackedAfter && treeAfter != treeBefore
+			if progressed {
 				failStreak = 0
-				fmt.Fprintf(os.Stderr, "  %s%s⟳ Iteration %d crashed%s (exit %d) — dirty tree detected, progress was made. Retrying.\n",
+				fmt.Fprintf(os.Stderr, "  %s%s⟳ Iteration %d crashed%s (exit %d) — working tree changed, progress was made. Retrying.\n",
 					ui.Bold, ui.Yellow, iterNum, ui.Reset, rc,
 				)
 			} else {

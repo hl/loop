@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -90,21 +91,32 @@ func TestRunFailStreak(t *testing.T) {
 func TestRunFailStreakDirtyTree(t *testing.T) {
 	tests := []struct {
 		name       string
-		dirty      bool
+		changing   bool // whether the tree fingerprint changes between iterations
 		max        int
 		wantReason StopReason
 		wantIters  int
 	}{
-		{"dirty tree resets streak", true, 5, ReasonMaxIterations, 5},
-		{"clean tree counts toward streak", false, 10, ReasonFailStreak, maxFailStreak},
+		{"changing tree resets streak", true, 5, ReasonMaxIterations, 5},
+		// A tree that is dirty but does not change (pre-existing edits, a
+		// deterministic no-op failure) must still count toward the streak — this
+		// is the E1 regression: "currently dirty" previously disabled the breaker.
+		{"static tree counts toward streak", false, 10, ReasonFailStreak, maxFailStreak},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 
-			orig := gitTreeDirty
-			gitTreeDirty = func() bool { return tt.dirty }
-			t.Cleanup(func() { gitTreeDirty = orig })
+			orig := gitTreeSnapshot
+			n := 0
+			gitTreeSnapshot = func() (string, bool) {
+				if tt.changing {
+					n++
+					return fmt.Sprintf("snapshot-%d", n), true
+				}
+				// Non-empty, unchanging fingerprint = dirty tree that never changes.
+				return "dirty-but-static", true
+			}
+			t.Cleanup(func() { gitTreeSnapshot = orig })
 
 			counter := filepath.Join(".", "counter")
 			var cmd []string

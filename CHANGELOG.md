@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The fail-streak circuit breaker is no longer permanently disabled by a dirty working tree. The engine now snapshots the tree before each iteration and only resets the streak when the tree actually *changed* during a failing iteration (real progress). A tree that is merely dirty but unchanged — the normal state when running a coding agent — now counts toward the streak, so a deterministically failing agent stops after three attempts instead of respawning forever.
 - `brr run` with `--max` no longer exits as a failure when an earlier iteration failed but the final iteration succeeded. The engine now clears the tracked last error on a successful iteration, so the "last iteration failed" error is only returned when the final iteration actually fails. This also prevents workflow stages from aborting with status "error" after a successful recovery.
 
 ## [0.6.0] "Encore Performance" - 2026-05-25

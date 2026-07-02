@@ -8,7 +8,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 
 | ID | Sev | Conf | Area | Title | Status |
 |----|-----|------|------|-------|--------|
-| E1 | high | confirmed | engine | Dirty-tree heuristic permanently disables fail-streak breaker | open |
+| E1 | high | confirmed | engine | Dirty-tree heuristic permanently disables fail-streak breaker | fixed |
 | S1 | high | confirmed | workflow | Stale signal files override command-stage results | open |
 | F1 | high | confirmed | config | Viper lowercases profile names; uppercase profiles unreachable | open |
 | W1 | medium | confirmed | engine+workflow | Interrupt swallowed when stage ends via signal file or max iterations | open |
