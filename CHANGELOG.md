@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A negative per-stage `max` (e.g. `max: -1`) is now rejected at validation instead of being silently replaced by `defaults.max`. Previously `effectiveMax` treated any `max <= 0` as "unset", so an invalid negative value passed `brr workflow validate` and was quietly ignored.
+
 - Resuming a workflow no longer appends a duplicate `workflow_started` event. A resume reuses the original run id, so the event log used to show one run "started" several times with no way to tell resumes apart. brr now emits a distinct `workflow_resumed` event (carrying the stage id the run picks up from) on the resume path, and `workflow_started` only for fresh runs.
 
 - An interrupt (Ctrl+C / SIGTERM) now reliably stops the run even when the same iteration produced a signal file or reached the iteration limit. Previously a Ctrl+C during a stage that had already written `.brr-cycle` returned a cycle (the workflow looped back and kept running), and a Ctrl+C on an agent stage's final iteration returned max-iterations (the workflow silently advanced). The engine and the command stage now check the interrupt first, so both stop with exit 130 and preserved state per the workflow spec.

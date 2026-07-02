@@ -123,6 +123,12 @@ func validateStage(wf Workflow, stage Stage, path string) error {
 		if len(stage.Command) > 0 {
 			return fmt.Errorf("%s.command is only valid for command stages", path)
 		}
+		// A negative max is neither "unset" (which falls back to defaults.max) nor a
+		// valid iteration count, so reject it explicitly rather than silently
+		// substituting the default.
+		if stage.Max < 0 {
+			return fmt.Errorf("%s.max must be >= 1 for agent stages, got %d", path, stage.Max)
+		}
 		if effectiveMax(wf, stage) < 1 {
 			return fmt.Errorf("%s.max must be >= 1 for agent stages", path)
 		}
