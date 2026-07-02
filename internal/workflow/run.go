@@ -231,7 +231,13 @@ func runCommandStage(stage Stage) (*engine.Result, error) {
 				return
 			case sig := <-sigCh:
 				interrupted.Store(true)
-				if cmd.Process != nil {
+				// The command-stage child shares brr's foreground process group
+				// (no setProcAttr), so the terminal already delivered Ctrl+C
+				// (SIGINT) to it directly. Re-sending SIGINT would be a double
+				// interrupt that hard-aborts tools with escalating interrupt
+				// semantics (pytest, npm, coding agents). Only forward signals
+				// that are NOT tty-broadcast to the group, i.e. SIGTERM.
+				if sig != os.Interrupt && cmd.Process != nil {
 					_ = cmd.Process.Signal(sig)
 				}
 			}

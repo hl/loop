@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -253,6 +254,51 @@ func TestResumeIgnoresMismatchedWorkflowState(t *testing.T) {
 	}
 }
 
+func TestRunCommandStageDoesNotForwardSIGINT(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGINT process-group semantics are POSIX-specific")
+	}
+	t.Chdir(t.TempDir())
+	// The child traps SIGINT and logs each delivery, then exits on its own. In a
+	// real terminal the tty delivers Ctrl+C to the shared foreground group, so
+	// brr must NOT also forward SIGINT (that double interrupt hard-aborts tools
+	// with escalating interrupt semantics). Here brr is the sole signal target,
+	// so the log appears ONLY if brr wrongly re-sent SIGINT to the child.
+	cmd := []string{"sh", "-c", "trap 'echo got >> sigint-log' INT; touch child-started; sleep 1"}
+	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: cmd}}, nil)
+
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat("child-started"); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if proc, err := os.FindProcess(os.Getpid()); err == nil {
+			_ = proc.Signal(os.Interrupt)
+		}
+	}()
+
+	result, err := Run(Options{
+		Name:     "ship",
+		Workflow: wf,
+		Config:   testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) {
+			return name, nil
+		},
+	})
+	if !errors.Is(err, engine.ErrInterrupted) {
+		t.Fatalf("expected interrupted, got result=%#v err=%v", result, err)
+	}
+	if result == nil || result.Reason != engine.ReasonInterrupted {
+		t.Fatalf("expected interrupted result, got %#v", result)
+	}
+	if _, statErr := os.Stat("sigint-log"); statErr == nil {
+		t.Fatal("brr forwarded SIGINT to the shared-group command-stage child (double interrupt)")
+	}
+}
+
 func TestRunScrubsStaleSignalFilesAtEntry(t *testing.T) {
 	t.Chdir(t.TempDir())
 	// A stale .brr-complete survives a kill -9 of a previous run. Without the
@@ -288,7 +334,7 @@ func TestRunScrubsStaleSignalFilesAtEntry(t *testing.T) {
 
 func TestRunCommandStageInterruptPreservesState(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("os.Interrupt signaling is not reliable for this process-level test on Windows")
+		t.Skip("os signaling is not reliable for this process-level test on Windows")
 	}
 	t.Chdir(t.TempDir())
 	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: sleepCmd()}}, nil)
@@ -297,7 +343,10 @@ func TestRunCommandStageInterruptPreservesState(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		proc, err := os.FindProcess(os.Getpid())
 		if err == nil {
-			_ = proc.Signal(os.Interrupt)
+			// SIGTERM is not tty-broadcast, so brr forwards it to the child
+			// (unlike SIGINT, which the shared group already receives). This
+			// exercises the interrupt→state-preserved path deterministically.
+			_ = proc.Signal(syscall.SIGTERM)
 		}
 	}()
 

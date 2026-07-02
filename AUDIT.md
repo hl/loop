@@ -12,7 +12,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | S1 | high | confirmed | workflow | Stale signal files override command-stage results | fixed |
 | F1 | high | confirmed | config | Viper lowercases profile names; uppercase profiles unreachable | open |
 | W1 | medium | confirmed | engine+workflow | Interrupt swallowed when stage ends via signal file or max iterations | open |
-| S2 | medium | confirmed | workflow | Double SIGINT delivered to command-stage child | open |
+| S2 | medium | confirmed | workflow | Double SIGINT delivered to command-stage child | fixed |
 | S3 | medium | likely | workflow | Race misclassifies Ctrl+C as stage failure | open |
 | C1 | medium | confirmed | cli | Empty resolved prompt accepted for workflow agent stages | open |
 | C2 | medium | confirmed | cli | Workflow error notifications misreport the terminal event | open |
