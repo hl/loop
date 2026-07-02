@@ -53,6 +53,44 @@ profiles:
 	}
 }
 
+func TestLoadProfileNamesCaseInsensitive(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	// viper lowercases map keys, so an uppercase `default` and `-p` value must
+	// still reach a mixed-case profile.
+	yaml := `default: MyAgent
+profiles:
+  MyAgent:
+    command: myagent
+    args: [--fast]
+`
+	if err := os.WriteFile(".brr.yaml", []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Default profile resolves despite the uppercase name.
+	cmd, name, err := cfg.ResolveProfile("")
+	if err != nil {
+		t.Fatalf("resolving default profile: %v", err)
+	}
+	if cmd[0] != "myagent" {
+		t.Errorf("expected command 'myagent', got %q", cmd[0])
+	}
+	if name != "myagent" {
+		t.Errorf("expected resolved name 'myagent', got %q", name)
+	}
+
+	// A mixed-case `-p` value resolves to the same profile.
+	if _, _, err := cfg.ResolveProfile("MYAGENT"); err != nil {
+		t.Errorf("expected mixed-case profile lookup to succeed, got: %v", err)
+	}
+}
+
 func TestLoadProjectConfigSymlinkRejected(t *testing.T) {
 	t.Chdir(t.TempDir())
 

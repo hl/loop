@@ -75,7 +75,7 @@ brr task --max 10 -p opus    # uses opus
 brr task --max 10 -p codex   # uses codex
 ```
 
-Add your own profiles for any agent or configuration you want.
+Add your own profiles for any agent or configuration you want. Profile names are matched case-insensitively, so `-p opus` and `-p Opus` select the same profile.
 
 **Priority:** `.brr.yaml` > `<os-config-dir>/brr/config.yaml` (e.g. `~/.config/brr/` on Linux, `~/Library/Application Support/brr/` on macOS, `%AppData%\brr\` on Windows).
 

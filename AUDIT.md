@@ -10,7 +10,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 |----|-----|------|------|-------|--------|
 | E1 | high | confirmed | engine | Dirty-tree heuristic permanently disables fail-streak breaker | fixed |
 | S1 | high | confirmed | workflow | Stale signal files override command-stage results | fixed |
-| F1 | high | confirmed | config | Viper lowercases profile names; uppercase profiles unreachable | open |
+| F1 | high | confirmed | config | Viper lowercases profile names; uppercase profiles unreachable | fixed |
 | W1 | medium | confirmed | engine+workflow | Interrupt swallowed when stage ends via signal file or max iterations | fixed |
 | S2 | medium | confirmed | workflow | Double SIGINT delivered to command-stage child | fixed |
 | S3 | medium | likely | workflow | Race misclassifies Ctrl+C as stage failure | fixed |

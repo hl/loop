@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/hl/brr/internal/fsutil"
 	"github.com/spf13/viper"
@@ -68,6 +69,12 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 
+	// Profile names are matched case-insensitively. viper already lowercases
+	// map keys internally, so the default name and every lookup must be
+	// lowercased to reach an uppercase or mixed-case profile (e.g. `default:
+	// MyAgent` with `profiles: { MyAgent: ... }`).
+	cfg.Default = strings.ToLower(cfg.Default)
+
 	if len(cfg.Profiles) == 0 {
 		return cfg, fmt.Errorf("no profiles defined in config — add at least one profile to your config file")
 	}
@@ -99,6 +106,9 @@ func (c Config) ResolveProfile(profileName string) ([]string, string, error) {
 	if name == "" {
 		name = c.Default
 	}
+	// Profile names are case-insensitive; viper stores keys lowercased, so
+	// normalize the requested name (including the `-p` flag value) to match.
+	name = strings.ToLower(name)
 
 	p, ok := c.Profiles[name]
 	if !ok {
