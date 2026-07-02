@@ -258,12 +258,16 @@ func runCommandStage(stage Stage) (*engine.Result, error) {
 		interrupted.Store(true)
 	}
 
+	// Interrupt wins over any signal file the stage wrote on its way out (e.g. a
+	// .brr-cycle): the user asked to stop, so stop with exit 130 and preserved
+	// state (workflow.md item 29) rather than acting on the transient signal.
+	if interrupted.Load() {
+		cleanupSignalFiles()
+		return &engine.Result{Reason: engine.ReasonInterrupted}, engine.ErrInterrupted
+	}
 	if sig := detectSignalFiles(); sig != nil {
 		cleanupSignalFiles()
 		return sig, nil
-	}
-	if interrupted.Load() {
-		return &engine.Result{Reason: engine.ReasonInterrupted}, engine.ErrInterrupted
 	}
 	if err != nil {
 		return &engine.Result{Reason: engine.ReasonCommandFailed}, err

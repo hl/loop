@@ -331,6 +331,40 @@ func TestRunCommandStageChildKilledBySignalIsInterrupt(t *testing.T) {
 	}
 }
 
+func TestRunCommandStageInterruptBeatsSignalFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal semantics")
+	}
+	t.Chdir(t.TempDir())
+	// The child writes .brr-cycle and then dies from SIGINT. The interrupt must
+	// win over the cycle signal: the workflow stops with exit 130 and preserved
+	// state (spec item 29) instead of looping back to the cycle target.
+	cmd := []string{"sh", "-c", "touch " + engine.SignalCycle + "; kill -INT $$"}
+	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: cmd}}, &Cycle{Target: "check", Max: 5})
+
+	result, err := Run(Options{
+		Name:     "ship",
+		Workflow: wf,
+		Config:   testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) {
+			return name, nil
+		},
+	})
+	if !errors.Is(err, engine.ErrInterrupted) {
+		t.Fatalf("expected interrupted, got result=%#v err=%v", result, err)
+	}
+	if result == nil || result.Reason != engine.ReasonInterrupted {
+		t.Fatalf("expected interrupted result (not cycle), got %#v", result)
+	}
+	state := readState(t, "ship")
+	if state.NextStageID != "check" {
+		t.Fatalf("expected resume at interrupted stage, got %q", state.NextStageID)
+	}
+	if state.Stages[0].Status != "interrupted" {
+		t.Fatalf("expected stage status interrupted, got %q", state.Stages[0].Status)
+	}
+}
+
 func TestRunScrubsStaleSignalFilesAtEntry(t *testing.T) {
 	t.Chdir(t.TempDir())
 	// A stale .brr-complete survives a kill -9 of a previous run. Without the

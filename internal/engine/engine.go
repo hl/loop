@@ -288,15 +288,18 @@ func Run(opts Options) (*Result, error) {
 		// that outlive the agent process and would otherwise accumulate across iterations.
 		reapGroup(cmd)
 
-		// Check for signal files immediately after subprocess exits
-		if sig := checkSignalFiles(); sig != nil {
-			return &Result{Reason: sig.reason, ApprovalContent: sig.approvalContent, FailedContent: sig.failedContent}, nil
-		}
-
-		// If user requested stop (first Ctrl+C), exit gracefully now that the iteration is done
+		// If the user requested stop (Ctrl+C / SIGTERM), that wins over any signal
+		// file the agent happened to write on its way out. The interrupt exits
+		// with status 130 and preserved state (workflow resume, cli exit code)
+		// instead of masking the stop as complete/failed/approval/cycle.
 		if stopping.Load() {
 			fmt.Fprintf(os.Stderr, "\n  %s%sStopped after iteration %d%s.\n", ui.Bold, ui.Yellow, iterNum, ui.Reset)
 			return &Result{Reason: ReasonInterrupted}, ErrInterrupted
+		}
+
+		// Check for signal files immediately after subprocess exits
+		if sig := checkSignalFiles(); sig != nil {
+			return &Result{Reason: sig.reason, ApprovalContent: sig.approvalContent, FailedContent: sig.failedContent}, nil
 		}
 
 		if err != nil {
@@ -335,6 +338,15 @@ func Run(opts Options) (*Result, error) {
 
 		// i counts total attempts, including failures
 		i++
+	}
+
+	// A pending interrupt wins over the max-iterations exit: if the loop reached
+	// its limit in the same window a Ctrl+C/SIGTERM arrived, stop with exit 130
+	// and preserved state rather than silently reporting a clean max-iterations
+	// finish (which, in a workflow, would advance to the next stage).
+	if stopping.Load() {
+		fmt.Fprintf(os.Stderr, "\n  %s%sStopped%s.\n", ui.Bold, ui.Yellow, ui.Reset)
+		return &Result{Reason: ReasonInterrupted}, ErrInterrupted
 	}
 
 	if lastErr != nil {
