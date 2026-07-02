@@ -28,13 +28,27 @@ func atomicWriteRegularFile(path string, data []byte, perm os.FileMode) error {
 		_ = tmp.Close()
 		return err
 	}
+	// Flush the data to stable storage before the rename. Without this, a power
+	// loss can make the rename durable ahead of the data blocks, leaving a
+	// zero-byte state file that fails to parse (the workflow then "starts fresh"
+	// and repeats already-completed stages).
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
 	if err := rejectNonRegularPath(path); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	// Persist the directory entry so the rename itself survives a crash (no-op on
+	// platforms that do not support directory fsync).
+	fsyncDir(dir)
+	return nil
 }
 
 func appendRegularFile(path string, data []byte, perm os.FileMode) error {

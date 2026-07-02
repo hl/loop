@@ -76,6 +76,34 @@ func TestStatusFrameUsesSpinnerForRunningStage(t *testing.T) {
 	}
 }
 
+func TestAtomicWriteRegularFileRoundTrips(t *testing.T) {
+	t.Chdir(t.TempDir())
+	path := filepath.Join("sub", "state.json")
+	payload := []byte(`{"schema_version":2}` + "\n")
+	if err := atomicWriteRegularFile(path, payload, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("content mismatch after sync+rename: got %q want %q", got, payload)
+	}
+	// Overwrite exercises the rename-over-existing path after the fsync reorder.
+	payload2 := []byte("second\n")
+	if err := atomicWriteRegularFile(path, payload2, 0o644); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload2) {
+		t.Fatalf("overwrite content mismatch: got %q want %q", got, payload2)
+	}
+}
+
 func TestWatchStatusKeepsFinalFrameWhenStateVanishes(t *testing.T) {
 	t.Chdir(t.TempDir())
 	(store{name: "ship"}).save(&State{

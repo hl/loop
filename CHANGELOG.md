@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Workflow state writes now fsync the temp file before renaming it into place (and fsync the parent directory on Unix). Previously a power loss could make the rename durable ahead of the data blocks, leaving a zero-byte state file that failed to parse — so the workflow silently "started fresh" and repeated already-completed stages.
+
 - The run-diagram cycle line no longer claims the last stage is the one looping back. It rendered `<last-stage> ↺ <target>` regardless of which stage requested the cycle — a structurally wrong flow when a middle stage cycles. It now shows just `↺ <target> (max N, used M)`.
 
 - `brr workflow status --watch` no longer wipes the final all-green frame when a run finishes. Workflow completion (and `--reset`) delete the state file, and watch mode used to clear the screen and print "No state found", erasing the result. It now tolerates one absent tick (covering the `--reset` delete→save window) and, once the state is durably gone, leaves the last frame on screen with a closing `state cleared — workflow finished or was reset` line. An initial absence (state never existed) still reports "No state found".
