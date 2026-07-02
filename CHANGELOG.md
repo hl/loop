@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Config, workflow YAML, workflow state JSON, and `.gitignore` reads are now size-capped. These used an uncapped `io.ReadAll`, so a planted multi-GB file (e.g. a `.brr/state/*.json`) could exhaust memory even in a read-only command like `brr workflow status`. A new `fsutil.ReadRegularFileCapped` bounds each read (1 MiB for config/workflow/gitignore, 4 MiB for state) and reports the offending file and limit. The prompt (10 MiB) and signal-file (4 KiB) reads were already capped and are unchanged.
+
+- `brr init` now re-verifies the `.brr` parent directory (not just the leaf `.brr/prompts`) before creating the project tree in stage 2. `MkdirAll` and the leaf symlink check both follow a symlinked intermediate `.brr`, so a `.brr -> elsewhere` swap slipped in after pre-flight could redirect the created directories — and later state writes — outside the repository. The parent is now rejected as a symlink at the stage boundary, closing that race window.
+
+- Linux desktop notifications whose title or body begins with `-` now render. The agent-controlled text was passed as positional argv to `notify-send`, which parses options anywhere in argv (GOption), so a body like `--version mismatch...` was swallowed as an option and the notification silently did not appear. brr now inserts a `--` option terminator before the positional arguments.
+
+- A project `.brr.yaml` profile no longer deep-merges with a same-named global profile. Config layers are now unmarshalled separately and merged with whole-profile replacement, so a project profile that sets `command` but omits `args` no longer silently inherits the global profile's args (e.g. `--dangerously-skip-permissions --model opus` leaking into a command that never asked for them). Profiles from different names still combine across layers.
+
+- Profile names are now matched case-insensitively, so an uppercase or mixed-case `default:` value and `-p` flag reach their profile. viper lowercases config map keys internally, so `default: MyAgent` with `profiles: { MyAgent: ... }` (or `-p MyAgent`) previously failed every invocation with `default profile "MyAgent" not found`. The default name and every profile lookup are now normalized to lowercase.
+
+- `brr <prompt> --notify` now sends a notification when the loop stops on a `.brr-cycle` signal outside a workflow. The root command returned the ".brr-cycle is only supported by 'brr workflow'" error before the notification block, so the cycle stop — a req-1 terminal event — was the only one that never pinged. The notification now dispatches before the error is returned.
+
+- Workflow error notifications now report the actual error instead of the stage's stop reason. A single command-stage failure used to notify "Too many consecutive failures" and a cycle-without-config error notified "cycle requested" as if the run were continuing. The error path now sends the real wrapped error (e.g. "stage build: exit status 1"), which identifies the terminal event per the notifications spec. Interrupts still send no notification.
+
+### Changed
+
+- Workflow stage `prompt:` values are now resolved through a restricted resolver: only named prompts and relative paths inside the working tree are allowed; absolute paths and `..` traversal are rejected. A cloned repo's `.brr/workflows/*.yaml` is untrusted, so it could previously read any absolute or `../`-traversing file (up to 10 MiB) into the agent's stdin — and `brr workflow validate` would read it too, doubling as a file-existence oracle. The root `brr <prompt>` argument keeps its permissive behavior (the user typed it).
+
+### Fixed
+
+- An empty resolved prompt is now rejected for workflow agent stages, by `brr workflow run` and `brr workflow validate`, not just `brr run`. The non-empty check moved into `resolvePrompt` itself (naming the resolved source — file path or inline text), so an empty `.brr/prompts/<name>.md` no longer validates cleanly and then loops an instruction-less agent.
+
+- Workflow state writes now fsync the temp file before renaming it into place (and fsync the parent directory on Unix). Previously a power loss could make the rename durable ahead of the data blocks, leaving a zero-byte state file that failed to parse — so the workflow silently "started fresh" and repeated already-completed stages.
+
+- The run-diagram cycle line no longer claims the last stage is the one looping back. It rendered `<last-stage> ↺ <target>` regardless of which stage requested the cycle — a structurally wrong flow when a middle stage cycles. It now shows just `↺ <target> (max N, used M)`.
+
+- `brr workflow status --watch` no longer wipes the final all-green frame when a run finishes. Workflow completion (and `--reset`) delete the state file, and watch mode used to clear the screen and print "No state found", erasing the result. It now tolerates one absent tick (covering the `--reset` delete→save window) and, once the state is durably gone, leaves the last frame on screen with a closing `state cleared — workflow finished or was reset` line. An initial absence (state never existed) still reports "No state found".
+
+- A negative per-stage `max` (e.g. `max: -1`) is now rejected at validation instead of being silently replaced by `defaults.max`. Previously `effectiveMax` treated any `max <= 0` as "unset", so an invalid negative value passed `brr workflow validate` and was quietly ignored.
+
+- Resuming a workflow no longer appends a duplicate `workflow_started` event. A resume reuses the original run id, so the event log used to show one run "started" several times with no way to tell resumes apart. brr now emits a distinct `workflow_resumed` event (carrying the stage id the run picks up from) on the resume path, and `workflow_started` only for fresh runs.
+
+- An interrupt (Ctrl+C / SIGTERM) now reliably stops the run even when the same iteration produced a signal file or reached the iteration limit. Previously a Ctrl+C during a stage that had already written `.brr-cycle` returned a cycle (the workflow looped back and kept running), and a Ctrl+C on an agent stage's final iteration returned max-iterations (the workflow silently advanced). The engine and the command stage now check the interrupt first, so both stop with exit 130 and preserved state per the workflow spec.
+- Ctrl+C during a workflow command stage is no longer intermittently misreported as a stage failure. brr now drains any signal left buffered when the child exits, and classifies a child that died from SIGINT/SIGTERM (via its wait status) as an interrupt — so the stage is consistently recorded "interrupted" with exit 130 instead of "error".
+- Ctrl+C during a workflow command stage no longer double-interrupts the child. The child shares brr's foreground process group, so the terminal already delivers the interrupt; brr no longer re-sends SIGINT (which made tools with escalating interrupt semantics — pytest, npm, coding agents — hard-abort). SIGTERM, which is not tty-broadcast, is still forwarded.
+- A single command-stage non-zero exit is now recorded as `command_failed` in the state file, event log, and status output, instead of being mislabeled `fail_streak` ("3 consecutive failures") — which only applies to the agent loop's retry breaker, not a one-shot gate.
+- `brr workflow run` now scrubs stale signal files (`.brr-complete`, `.brr-failed`, `.brr-needs-approval`, `.brr-cycle`) once at entry, before any stage runs. Previously a signal file left behind by a `kill -9`'d or power-lost run could override a command stage's real exit status (a stale `.brr-complete` recording a failing gate as "completed") or short-circuit the next agent stage. Only regular files are removed.
+- Windows process-tree cleanup no longer risks infinite recursion. The Toolhelp parent→children walk now tracks visited PIDs, so PID-reuse cycles or self-referential parent links can't exhaust the stack and leave orphaned child processes running mid-cleanup.
+- Signals that arrive in the brief window between spawning an iteration's child and publishing it are no longer dropped. Previously a second Ctrl+C landing in that window incremented the escalation counter without reaching the child, so a third press jumped straight to SIGKILL and skipped the graceful interrupt; a SIGTERM in the window printed "forwarding" but never delivered. The engine now records such signals and forwards them (SIGTERM, then the reached SIGINT/SIGKILL level) as soon as the child is published.
+- The fail-streak circuit breaker is no longer permanently disabled by a dirty working tree. The engine now snapshots the tree before each iteration and only resets the streak when the tree actually *changed* during a failing iteration (real progress). A tree that is merely dirty but unchanged — the normal state when running a coding agent — now counts toward the streak, so a deterministically failing agent stops after three attempts instead of respawning forever.
+- `brr run` with `--max` no longer exits as a failure when an earlier iteration failed but the final iteration succeeded. The engine now clears the tracked last error on a successful iteration, so the "last iteration failed" error is only returned when the final iteration actually fails. This also prevents workflow stages from aborting with status "error" after a successful recovery.
+
 ## [0.6.0] "Encore Performance" - 2026-05-25
 
 ### Added

@@ -20,6 +20,13 @@ const exitCodeSIGINT = 130 // 128 + SIGINT(2)
 
 const maxPromptFileSize = 10 * 1024 * 1024 // 10 MiB
 
+// Notification dispatch is routed through these package-level indirections so
+// tests can observe which terminal event a command chose to report.
+var (
+	notifySend          = notify.Send
+	notifyWorkflowError = notify.SendWorkflowError
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "brr <prompt> [flags]",
 	Short: "Your AI agent, but unhinged",
@@ -98,10 +105,6 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if strings.TrimSpace(promptText) == "" {
-		return fmt.Errorf("prompt is empty")
-	}
-
 	doNotify, err := cmd.Flags().GetBool("notify")
 	if err != nil {
 		return fmt.Errorf("reading --notify flag: %w", err)
@@ -117,12 +120,20 @@ func run(cmd *cobra.Command, args []string) error {
 	})
 
 	if result != nil && result.Reason == engine.ReasonCycle {
+		// A .brr-cycle stop is a req-1 terminal event, so still send the ping on
+		// --notify before returning the workflow-only error — which would otherwise
+		// short-circuit the notification block below.
+		if doNotify {
+			if nErr := notifySend(result); nErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
+			}
+		}
 		return fmt.Errorf(".brr-cycle is only supported by 'brr workflow'")
 	}
 
 	// Send notification (best-effort — failure is logged but does not affect exit code)
 	if doNotify && result != nil && result.Reason != engine.ReasonInterrupted {
-		if nErr := notify.Send(result); nErr != nil {
+		if nErr := notifySend(result); nErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
 		}
 	}
@@ -133,23 +144,58 @@ func run(cmd *cobra.Command, args []string) error {
 	return runErr
 }
 
-// resolvePrompt reads a prompt from a file path, .brr/prompts/<name>.md, or returns it as inline text.
+// resolvePrompt reads a prompt from a file path, .brr/prompts/<name>.md, or
+// returns it as inline text. The final resolved prompt must be non-empty after
+// trimming (prompt-resolution.md requirement 10); an empty result errors and
+// names the source it came from.
 func resolvePrompt(nameOrPath string) (string, error) {
+	return resolvePromptRestricted(nameOrPath, false)
+}
+
+// resolveWorkflowPrompt resolves a prompt referenced by a workflow stage. A
+// cloned repo's .brr/workflows/*.yaml is untrusted, so a workflow prompt must
+// not become an arbitrary file-read primitive (even `brr workflow validate`
+// reads it). Only named prompts and relative paths inside the working tree are
+// allowed; absolute paths and ".." traversal are rejected. Inline prompt text
+// still passes through.
+func resolveWorkflowPrompt(nameOrPath string) (string, error) {
+	return resolvePromptRestricted(nameOrPath, true)
+}
+
+func resolvePromptRestricted(nameOrPath string, restrict bool) (string, error) {
+	text, source, err := resolvePromptText(nameOrPath, restrict)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("prompt is empty: %s", source)
+	}
+	return text, nil
+}
+
+// resolvePromptText resolves nameOrPath to prompt text and a human-readable
+// description of where it came from, without checking emptiness. When restrict
+// is set, path-like arguments that are absolute or escape the working tree via
+// ".." are rejected before any filesystem access (inline text is unaffected).
+func resolvePromptText(nameOrPath string, restrict bool) (text, source string, err error) {
+	if restrict && looksLikeFilePath(nameOrPath) && (filepath.IsAbs(nameOrPath) || hasDotDotSegment(nameOrPath)) {
+		return "", "", fmt.Errorf("workflow prompt %q must be a named prompt or a relative path inside the working tree (no absolute paths or \"..\")", nameOrPath)
+	}
 	// If it's an existing regular file, read it directly (rejects symlinks, FIFOs, etc.)
 	if fi, statErr := os.Lstat(nameOrPath); statErr == nil {
 		if fi.IsDir() {
 			// Don't treat directories as prompt files — fall through to named prompt lookup
 		} else if text, err := readPromptFile(nameOrPath); err == nil {
-			return text, nil
+			return text, fmt.Sprintf("prompt file %s", nameOrPath), nil
 		} else {
-			return "", fmt.Errorf("reading prompt file %s: %w", nameOrPath, err)
+			return "", "", fmt.Errorf("reading prompt file %s: %w", nameOrPath, err)
 		}
 	} else if looksLikeFilePath(nameOrPath) {
 		// It looks like a file path — distinguish "not found" from other stat errors
 		if os.IsNotExist(statErr) {
-			return "", fmt.Errorf("prompt file not found: %s", nameOrPath)
+			return "", "", fmt.Errorf("prompt file not found: %s", nameOrPath)
 		}
-		return "", fmt.Errorf("accessing prompt file %s: %w", nameOrPath, statErr)
+		return "", "", fmt.Errorf("accessing prompt file %s: %w", nameOrPath, statErr)
 	}
 
 	// For bare names (no spaces), try named prompt resolution
@@ -158,30 +204,30 @@ func resolvePrompt(nameOrPath string) (string, error) {
 
 		// Reject path traversal attempts
 		if strings.Contains(name, "..") {
-			return "", fmt.Errorf("invalid prompt name: %q", name)
+			return "", "", fmt.Errorf("invalid prompt name: %q", name)
 		}
 
 		// Try .brr/prompts/<name>.md
 		projectPath := filepath.Join(".brr", "prompts", name+".md")
 		if text, err := readPromptFile(projectPath); err == nil {
-			return text, nil
+			return text, fmt.Sprintf("prompt %s", projectPath), nil
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("reading %s: %w", projectPath, err)
+			return "", "", fmt.Errorf("reading %s: %w", projectPath, err)
 		}
 
 		// Try user config dir prompts/<name>.md
 		if configDir, err := os.UserConfigDir(); err == nil {
 			userPath := filepath.Join(configDir, "brr", "prompts", name+".md")
 			if text, err := readPromptFile(userPath); err == nil {
-				return text, nil
+				return text, fmt.Sprintf("prompt %s", userPath), nil
 			} else if !errors.Is(err, os.ErrNotExist) {
-				return "", fmt.Errorf("reading %s: %w", userPath, err)
+				return "", "", fmt.Errorf("reading %s: %w", userPath, err)
 			}
 		}
 	}
 
 	// Treat as inline prompt text
-	return nameOrPath, nil
+	return nameOrPath, "inline prompt text", nil
 }
 
 func readPromptFile(path string) (string, error) {
@@ -213,6 +259,17 @@ func looksLikeFilePath(s string) bool {
 	}
 	// Without spaces: separator alone or recognized extension alone → file path
 	return hasSep || hasPromptExt
+}
+
+// hasDotDotSegment reports whether p contains a ".." path segment (as opposed to
+// ".." appearing inside a filename or inline text like "wait...").
+func hasDotDotSegment(p string) bool {
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == filepath.Separator }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func isPromptExtension(ext string) bool {

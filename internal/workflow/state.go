@@ -14,6 +14,12 @@ import (
 	"github.com/hl/brr/internal/fsutil"
 )
 
+// maxStateFileSize bounds how much of a workflow state JSON file brr will read.
+// State holds per-stage status for one run; 4 MiB is far beyond any real state
+// file yet small enough that a planted multi-GB file cannot exhaust memory in an
+// otherwise read-only command like `brr workflow status`.
+const maxStateFileSize = 4 << 20 // 4 MiB
+
 type store struct {
 	name string
 }
@@ -27,7 +33,7 @@ func (s store) eventsPath() string {
 }
 
 func (s store) load() (*State, error) {
-	data, err := fsutil.ReadRegularFile(s.statePath())
+	data, err := fsutil.ReadRegularFileCapped(s.statePath(), maxStateFileSize)
 	if err != nil {
 		return nil, err
 	}

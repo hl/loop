@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -90,21 +92,32 @@ func TestRunFailStreak(t *testing.T) {
 func TestRunFailStreakDirtyTree(t *testing.T) {
 	tests := []struct {
 		name       string
-		dirty      bool
+		changing   bool // whether the tree fingerprint changes between iterations
 		max        int
 		wantReason StopReason
 		wantIters  int
 	}{
-		{"dirty tree resets streak", true, 5, ReasonMaxIterations, 5},
-		{"clean tree counts toward streak", false, 10, ReasonFailStreak, maxFailStreak},
+		{"changing tree resets streak", true, 5, ReasonMaxIterations, 5},
+		// A tree that is dirty but does not change (pre-existing edits, a
+		// deterministic no-op failure) must still count toward the streak — this
+		// is the E1 regression: "currently dirty" previously disabled the breaker.
+		{"static tree counts toward streak", false, 10, ReasonFailStreak, maxFailStreak},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 
-			orig := gitTreeDirty
-			gitTreeDirty = func() bool { return tt.dirty }
-			t.Cleanup(func() { gitTreeDirty = orig })
+			orig := gitTreeSnapshot
+			n := 0
+			gitTreeSnapshot = func() (string, bool) {
+				if tt.changing {
+					n++
+					return fmt.Sprintf("snapshot-%d", n), true
+				}
+				// Non-empty, unchanging fingerprint = dirty tree that never changes.
+				return "dirty-but-static", true
+			}
+			t.Cleanup(func() { gitTreeSnapshot = orig })
 
 			counter := filepath.Join(".", "counter")
 			var cmd []string
@@ -133,6 +146,38 @@ func TestRunFailStreakDirtyTree(t *testing.T) {
 			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 			if len(lines) != tt.wantIters {
 				t.Errorf("expected %d iterations, got %d", tt.wantIters, len(lines))
+			}
+		})
+	}
+}
+
+func TestPendingSignalsToForward(t *testing.T) {
+	tests := []struct {
+		name       string
+		pendingINT int
+		pendingTRM bool
+		want       []syscall.Signal
+	}{
+		{"nothing pending", 0, false, nil},
+		// The E2 regression: a level-2 SIGINT that landed in the Start→publish
+		// window must still reach the child as SIGINT, not be dropped so a later
+		// press jumps straight to SIGKILL.
+		{"level-2 SIGINT forwarded", 2, false, []syscall.Signal{sigINT}},
+		{"level-3 escalates to KILL", 3, false, []syscall.Signal{sigKILL}},
+		{"SIGTERM only", 0, true, []syscall.Signal{sigTERM}},
+		{"SIGTERM before SIGINT", 2, true, []syscall.Signal{sigTERM, sigINT}},
+		{"SIGTERM before KILL", 3, true, []syscall.Signal{sigTERM, sigKILL}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pendingSignalsToForward(tt.pendingINT, tt.pendingTRM)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", got, tt.want)
+				}
 			}
 		})
 	}
@@ -350,13 +395,14 @@ func TestRunMaxIterationsWithFailure(t *testing.T) {
 func TestRunMaxIterationsLastSucceeds(t *testing.T) {
 	t.Chdir(t.TempDir())
 
-	// Command that fails on first call, succeeds on second (uses counter file)
+	// Command that fails on first call, succeeds on second (uses counter file):
+	// exit 1 (creating the file) when it's absent, exit 0 once it exists.
 	counter := filepath.Join(".", "attempt")
 	var cmd []string
 	if runtime.GOOS == "windows" {
-		cmd = []string{"cmd", "/c", "echo x >> " + counter + " & exit 0"}
+		cmd = []string{"cmd", "/c", "if exist " + counter + " (exit 0) else (echo x > " + counter + " & exit 1)"}
 	} else {
-		cmd = []string{"sh", "-c", "echo x >> " + counter}
+		cmd = []string{"sh", "-c", "if [ -f " + counter + " ]; then exit 0; else : > " + counter + "; exit 1; fi"}
 	}
 
 	result, err := Run(Options{

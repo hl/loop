@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hl/brr/internal/engine"
 	"github.com/spf13/cobra"
 )
 
@@ -148,6 +149,20 @@ func commandYAML() string {
 	return `["true"]`
 }
 
+func failingCommandYAML() string {
+	if runtime.GOOS == "windows" {
+		return `["cmd", "/c", "exit 1"]`
+	}
+	return `["false"]`
+}
+
+func cycleCommandYAML() string {
+	if runtime.GOOS == "windows" {
+		return `["cmd", "/c", "echo x > .brr-cycle"]`
+	}
+	return `["sh", "-c", "touch .brr-cycle"]`
+}
+
 func TestRunIntegrationSuccess(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t)
@@ -285,6 +300,32 @@ func TestRunIntegrationCycleSignalWithoutWorkflowErrors(t *testing.T) {
 	}
 }
 
+func TestRunNotifiesOnCycleStop(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeCycleConfig(t)
+
+	var gotResult *engine.Result
+	calls := 0
+	orig := notifySend
+	notifySend = func(r *engine.Result) error { calls++; gotResult = r; return nil }
+	t.Cleanup(func() { notifySend = orig })
+
+	cmd := newTestRootCmd()
+	cmd.SetArgs([]string{"hello", "-m", "1", "-n"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "only supported by 'brr workflow'") {
+		t.Fatalf("expected workflow-only cycle error, got: %v", err)
+	}
+	// A .brr-cycle stop is the one req-1 terminal event whose notification the
+	// root command used to skip (the error returned before the notify block).
+	if calls != 1 {
+		t.Fatalf("expected exactly one notification on cycle stop, got %d", calls)
+	}
+	if gotResult == nil || gotResult.Reason != engine.ReasonCycle {
+		t.Fatalf("expected a cycle notification, got %#v", gotResult)
+	}
+}
+
 func TestRunIntegrationNoArgs(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t)
@@ -317,6 +358,129 @@ func TestWorkflowValidateIntegration(t *testing.T) {
 	cmd.SetArgs([]string{"ship"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestWorkflowValidateRejectsEmptyPrompt(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestConfig(t)
+	if err := os.MkdirAll(filepath.Join(".brr", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(".brr", "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".brr", "prompts", "build.md"), []byte("   \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wf := "version: 2\ndefaults: {max: 1}\nstages:\n  - id: build\n    type: agent\n    prompt: build\n"
+	if err := os.WriteFile(filepath.Join(".brr", "workflows", "ship.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newTestWorkflowValidateCmd()
+	cmd.SetArgs([]string{"ship"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected validate to reject an empty resolved stage prompt")
+	}
+	if !strings.Contains(err.Error(), "prompt is empty") {
+		t.Fatalf("expected 'prompt is empty' error, got: %v", err)
+	}
+}
+
+func TestWorkflowValidateRejectsAbsolutePrompt(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestConfig(t)
+	secret := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(secret, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(".brr", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := fmt.Sprintf("version: 2\ndefaults: {max: 1}\nstages:\n  - id: build\n    type: agent\n    prompt: %q\n", secret)
+	if err := os.WriteFile(filepath.Join(".brr", "workflows", "ship.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// `brr workflow validate` reads the stage prompt today, so the restriction
+	// must also close the file-existence oracle it would otherwise expose.
+	cmd := newTestWorkflowValidateCmd()
+	cmd.SetArgs([]string{"ship"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected validate to reject an absolute stage prompt path")
+	}
+	if !strings.Contains(err.Error(), "working tree") {
+		t.Fatalf("expected working-tree restriction error, got: %v", err)
+	}
+}
+
+func TestWorkflowRunNotifiesActualErrorOnCommandFailure(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestConfig(t)
+	if err := os.MkdirAll(filepath.Join(".brr", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := "version: 2\nstages:\n  - id: gate\n    type: command\n    command: " + failingCommandYAML() + "\n"
+	if err := os.WriteFile(filepath.Join(".brr", "workflows", "ship.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotErr error
+	sendCalls := 0
+	origWE, origSend := notifyWorkflowError, notifySend
+	notifyWorkflowError = func(err error) error { gotErr = err; return nil }
+	notifySend = func(*engine.Result) error { sendCalls++; return nil }
+	t.Cleanup(func() { notifyWorkflowError, notifySend = origWE, origSend })
+
+	cmd := newTestWorkflowRunCmd()
+	cmd.SetArgs([]string{"ship", "-n"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected command-stage failure")
+	}
+	if gotErr == nil {
+		t.Fatal("expected a workflow-error notification carrying the actual error")
+	}
+	if !strings.Contains(gotErr.Error(), "gate") {
+		t.Fatalf("notification should identify the failing stage, got: %v", gotErr)
+	}
+	if sendCalls != 0 {
+		t.Fatalf("command failure must not notify via the stop-reason path, got %d Send call(s)", sendCalls)
+	}
+}
+
+func TestWorkflowRunNotifiesActualErrorOnCycleWithoutConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestConfig(t)
+	if err := os.MkdirAll(filepath.Join(".brr", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wf := "version: 2\nstages:\n  - id: loop\n    type: command\n    command: " + cycleCommandYAML() + "\n"
+	if err := os.WriteFile(filepath.Join(".brr", "workflows", "ship.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotErr error
+	sendCalls := 0
+	origWE, origSend := notifyWorkflowError, notifySend
+	notifyWorkflowError = func(err error) error { gotErr = err; return nil }
+	notifySend = func(*engine.Result) error { sendCalls++; return nil }
+	t.Cleanup(func() { notifyWorkflowError, notifySend = origWE, origSend })
+
+	cmd := newTestWorkflowRunCmd()
+	cmd.SetArgs([]string{"ship", "-n"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected cycle-without-config error")
+	}
+	// The stop reason here is ReasonCycle; the notification must report the real
+	// error, not "cycle requested" as if the run were continuing.
+	if gotErr == nil || !strings.Contains(gotErr.Error(), "cycle") {
+		t.Fatalf("expected a cycle-error notification carrying the actual error, got: %v", gotErr)
+	}
+	if sendCalls != 0 {
+		t.Fatalf("cycle error must not notify via the stop-reason path, got %d Send call(s)", sendCalls)
 	}
 }
 

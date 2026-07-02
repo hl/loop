@@ -87,7 +87,7 @@ stages:                          # required — at least one
 
 - **Profile** (agent stages) resolves as: stage `profile` → `--profile` flag → `defaults.profile` → config default. A profile maps to a `command` + optional `args` in `.brr.yaml`.
 - **Effective max** (agent stages): stage `max` → `defaults.max`.
-- **Prompt**: an existing file path wins; otherwise `.brr/prompts/<name>.md`, then `<os-config-dir>/brr/prompts/<name>.md`; otherwise the value is used as inline prompt text. (See [`specs/prompt-resolution.md`](specs/prompt-resolution.md).)
+- **Prompt**: an existing file path wins; otherwise `.brr/prompts/<name>.md`, then `<os-config-dir>/brr/prompts/<name>.md`; otherwise the value is used as inline prompt text. (See [`specs/prompt-resolution.md`](specs/prompt-resolution.md).) A workflow stage's `prompt` may only reference a named prompt or a relative path **inside the working tree** — absolute paths and `..` traversal are rejected (a cloned workflow file is untrusted and must not read out-of-tree files). Must resolve to non-empty text.
 
 ---
 
@@ -153,7 +153,7 @@ Read it as a sentence: turn `REQUIREMENTS.md` into a **spec**, draft a **plan**,
   cycle:   build (max 3)
 
   flow: ✓ spec → ✓ plan → ▶ build → ○ check → ○ verify → ○ review
-  cycle: review ↺ build (max 3, used 0)
+  cycle: ↺ build (max 3, used 0)
 
 ━━━ Stage 3/6 — build ▸ build (max 100) ━━━
 ```
@@ -203,7 +203,7 @@ Signal files (`.brr-complete`, `.brr-failed`, `.brr-needs-approval`, `.brr-cycle
 Progress lives under `.brr/state/workflows/`:
 
 - `<name>.json` — resume state: `schema_version`, `workflow`, `run_id`, `started_at`, `updated_at`, `start_sha`, `next_stage_id`, `cycle_count`, and a per-stage status entry (status, reason, duration, prompt/profile/command metadata).
-- `<name>.events.jsonl` — append-only event log: `workflow_started`, `stage_started`, `stage_finished`, `cycle`, `cycle_skipped`, `workflow_error`, `workflow_complete`.
+- `<name>.events.jsonl` — append-only event log: `workflow_started` (fresh run) or `workflow_resumed` (resume, with the stage id it picks up from), `stage_started`, `stage_finished`, `cycle`, `cycle_skipped`, `workflow_error`, `workflow_complete`.
 
 Both are runtime state — `brr init` gitignores `.brr/state/`. Writes reject symlinks and other non-regular files.
 

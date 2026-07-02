@@ -113,6 +113,19 @@ stages:
 			want: "argv array",
 		},
 		{
+			name: "negative stage max",
+			yaml: `
+version: 2
+defaults: {max: 1}
+stages:
+  - id: build
+    type: agent
+    prompt: build
+    max: -1
+`,
+			want: "max must be >= 1",
+		},
+		{
 			name: "bad cycle target",
 			yaml: `
 version: 2

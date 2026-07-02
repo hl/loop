@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -72,8 +73,8 @@ func TestRunCommandStageFailurePreservesState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected command stage failure")
 	}
-	if result == nil || result.Reason != engine.ReasonFailStreak {
-		t.Fatalf("expected fail streak result, got %#v", result)
+	if result == nil || result.Reason != engine.ReasonCommandFailed {
+		t.Fatalf("expected command_failed result, got %#v", result)
 	}
 	state := readState(t, "ship")
 	if state.NextStageID != "check" {
@@ -81,6 +82,10 @@ func TestRunCommandStageFailurePreservesState(t *testing.T) {
 	}
 	if state.Stages[0].Status != "error" {
 		t.Fatalf("expected stage status error, got %q", state.Stages[0].Status)
+	}
+	// A single deterministic gate failure must not be mislabeled as a fail streak.
+	if state.Stages[0].Reason != "command_failed" {
+		t.Fatalf("expected reason command_failed, got %q", state.Stages[0].Reason)
 	}
 }
 
@@ -249,9 +254,236 @@ func TestResumeIgnoresMismatchedWorkflowState(t *testing.T) {
 	}
 }
 
+func TestFreshRunEmitsStartedEvent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	// The gate fails, preserving the event log so it can be inspected.
+	wf := testWorkflow([]Stage{{ID: "gate", Type: StageTypeCommand, Command: failCmd()}}, nil)
+
+	_, err := Run(Options{
+		Name:          "ship",
+		Workflow:      wf,
+		Config:        testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) { return name, nil },
+	})
+	if err == nil {
+		t.Fatal("expected the gate stage to fail")
+	}
+
+	var started, resumed int
+	for _, e := range readEvents(t, "ship") {
+		switch e.Type {
+		case "workflow_started":
+			started++
+		case "workflow_resumed":
+			resumed++
+		}
+	}
+	if started != 1 {
+		t.Fatalf("expected exactly one workflow_started on a fresh run, got %d", started)
+	}
+	if resumed != 0 {
+		t.Fatalf("fresh run must not emit workflow_resumed, got %d", resumed)
+	}
+}
+
+func TestResumeEmitsResumedEventNotStarted(t *testing.T) {
+	t.Chdir(t.TempDir())
+	wf := testWorkflow([]Stage{
+		{ID: "first", Type: StageTypeAgent, Prompt: "first", Max: 1},
+		{ID: "gate", Type: StageTypeCommand, Command: failCmd()},
+	}, nil)
+	// Pre-save state so the run resumes at the command gate. The gate fails,
+	// which preserves the event log for inspection.
+	state := &State{
+		SchemaVersion: SchemaVersion,
+		Workflow:      "ship",
+		RunID:         "abc",
+		StartedAt:     testTime(),
+		UpdatedAt:     testTime(),
+		NextStageID:   "gate",
+		Stages:        initialStageStatus(wf),
+	}
+	(store{name: "ship"}).save(state)
+
+	_, err := Run(Options{
+		Name:          "ship",
+		Workflow:      wf,
+		Config:        testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) { return name + "\n", nil },
+	})
+	if err == nil {
+		t.Fatal("expected the resumed gate stage to fail")
+	}
+
+	var started, resumed int
+	var resumedStage string
+	for _, e := range readEvents(t, "ship") {
+		switch e.Type {
+		case "workflow_started":
+			started++
+		case "workflow_resumed":
+			resumed++
+			resumedStage = e.StageID
+		}
+	}
+	if started != 0 {
+		t.Fatalf("resume must not emit workflow_started, got %d", started)
+	}
+	if resumed != 1 {
+		t.Fatalf("expected exactly one workflow_resumed, got %d", resumed)
+	}
+	if resumedStage != "gate" {
+		t.Fatalf("expected workflow_resumed to name stage %q, got %q", "gate", resumedStage)
+	}
+}
+
+func TestRunCommandStageDoesNotForwardSIGINT(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGINT process-group semantics are POSIX-specific")
+	}
+	t.Chdir(t.TempDir())
+	// The child traps SIGINT and logs each delivery, then exits on its own. In a
+	// real terminal the tty delivers Ctrl+C to the shared foreground group, so
+	// brr must NOT also forward SIGINT (that double interrupt hard-aborts tools
+	// with escalating interrupt semantics). Here brr is the sole signal target,
+	// so the log appears ONLY if brr wrongly re-sent SIGINT to the child.
+	cmd := []string{"sh", "-c", "trap 'echo got >> sigint-log' INT; touch child-started; sleep 1"}
+	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: cmd}}, nil)
+
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat("child-started"); err == nil {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if proc, err := os.FindProcess(os.Getpid()); err == nil {
+			_ = proc.Signal(os.Interrupt)
+		}
+	}()
+
+	result, err := Run(Options{
+		Name:     "ship",
+		Workflow: wf,
+		Config:   testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) {
+			return name, nil
+		},
+	})
+	if !errors.Is(err, engine.ErrInterrupted) {
+		t.Fatalf("expected interrupted, got result=%#v err=%v", result, err)
+	}
+	if result == nil || result.Reason != engine.ReasonInterrupted {
+		t.Fatalf("expected interrupted result, got %#v", result)
+	}
+	if _, statErr := os.Stat("sigint-log"); statErr == nil {
+		t.Fatal("brr forwarded SIGINT to the shared-group command-stage child (double interrupt)")
+	}
+}
+
+func TestRunCommandStageChildKilledBySignalIsInterrupt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX wait-status signal classification")
+	}
+	t.Chdir(t.TempDir())
+	// The child kills itself with SIGINT (as the tty would to the shared group)
+	// and returns from Wait before brr's handler observes anything, so the
+	// interrupt flag is not set by the goroutine. Without wait-status
+	// classification this keypress is misreported as a stage failure.
+	cmd := []string{"sh", "-c", "kill -INT $$"}
+	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: cmd}}, nil)
+
+	result, err := Run(Options{
+		Name:     "ship",
+		Workflow: wf,
+		Config:   testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) {
+			return name, nil
+		},
+	})
+	if !errors.Is(err, engine.ErrInterrupted) {
+		t.Fatalf("expected interrupted, got result=%#v err=%v", result, err)
+	}
+	if result == nil || result.Reason != engine.ReasonInterrupted {
+		t.Fatalf("expected interrupted result, got %#v", result)
+	}
+	state := readState(t, "ship")
+	if state.Stages[0].Status != "interrupted" {
+		t.Fatalf("expected stage status interrupted, got %q", state.Stages[0].Status)
+	}
+}
+
+func TestRunCommandStageInterruptBeatsSignalFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal semantics")
+	}
+	t.Chdir(t.TempDir())
+	// The child writes .brr-cycle and then dies from SIGINT. The interrupt must
+	// win over the cycle signal: the workflow stops with exit 130 and preserved
+	// state (spec item 29) instead of looping back to the cycle target.
+	cmd := []string{"sh", "-c", "touch " + engine.SignalCycle + "; kill -INT $$"}
+	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: cmd}}, &Cycle{Target: "check", Max: 5})
+
+	result, err := Run(Options{
+		Name:     "ship",
+		Workflow: wf,
+		Config:   testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) {
+			return name, nil
+		},
+	})
+	if !errors.Is(err, engine.ErrInterrupted) {
+		t.Fatalf("expected interrupted, got result=%#v err=%v", result, err)
+	}
+	if result == nil || result.Reason != engine.ReasonInterrupted {
+		t.Fatalf("expected interrupted result (not cycle), got %#v", result)
+	}
+	state := readState(t, "ship")
+	if state.NextStageID != "check" {
+		t.Fatalf("expected resume at interrupted stage, got %q", state.NextStageID)
+	}
+	if state.Stages[0].Status != "interrupted" {
+		t.Fatalf("expected stage status interrupted, got %q", state.Stages[0].Status)
+	}
+}
+
+func TestRunScrubsStaleSignalFilesAtEntry(t *testing.T) {
+	t.Chdir(t.TempDir())
+	// A stale .brr-complete survives a kill -9 of a previous run. Without the
+	// entry scrub, the failing command stage's post-Wait detection would see it
+	// and record the stage "completed", advancing past a failing gate.
+	if err := os.WriteFile(engine.SignalComplete, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: failCmd()}}, nil)
+
+	result, err := Run(Options{
+		Name:     "ship",
+		Workflow: wf,
+		Config:   testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) {
+			return name, nil
+		},
+	})
+	if err == nil {
+		t.Fatal("expected the real command failure to surface, not a stale .brr-complete")
+	}
+	if result == nil || result.Reason == engine.ReasonComplete {
+		t.Fatalf("stale signal masked the failure, got %#v", result)
+	}
+	if _, statErr := os.Stat(engine.SignalComplete); statErr == nil {
+		t.Error("expected stale .brr-complete to be scrubbed at entry")
+	}
+	state := readState(t, "ship")
+	if state.Stages[0].Status != "error" {
+		t.Fatalf("expected failing stage status error, got %q", state.Stages[0].Status)
+	}
+}
+
 func TestRunCommandStageInterruptPreservesState(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("os.Interrupt signaling is not reliable for this process-level test on Windows")
+		t.Skip("os signaling is not reliable for this process-level test on Windows")
 	}
 	t.Chdir(t.TempDir())
 	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: sleepCmd()}}, nil)
@@ -260,7 +492,10 @@ func TestRunCommandStageInterruptPreservesState(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		proc, err := os.FindProcess(os.Getpid())
 		if err == nil {
-			_ = proc.Signal(os.Interrupt)
+			// SIGTERM is not tty-broadcast, so brr forwards it to the child
+			// (unlike SIGINT, which the shared group already receives). This
+			// exercises the interrupt→state-preserved path deterministically.
+			_ = proc.Signal(syscall.SIGTERM)
 		}
 	}()
 

@@ -50,6 +50,8 @@ func format(result *engine.Result) (title, body string) {
 		return "brr — max iterations", "Maximum iteration count reached."
 	case engine.ReasonFailStreak:
 		return "brr — stopped", "Too many consecutive failures."
+	case engine.ReasonCommandFailed:
+		return "brr — command failed", "A command stage exited non-zero."
 	default:
 		return "brr — stopped", "The loop has stopped."
 	}
@@ -76,6 +78,14 @@ func truncate(s string, maxLen int) string {
 		cut--
 	}
 	return s[:cut] + "…"
+}
+
+// notifySendArgs builds the argv for the Linux notify-send command. The "--"
+// terminates option parsing (notify-send uses GOption, which otherwise scans
+// the whole argv for flags), so an agent-controlled title or body that begins
+// with "-" is treated as positional text rather than a dropped option.
+func notifySendArgs(title, body string) []string {
+	return []string{"notify-send", "--", title, body}
 }
 
 // run executes a command and returns any error, swallowing stderr output.

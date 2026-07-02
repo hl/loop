@@ -76,6 +76,102 @@ func TestStatusFrameUsesSpinnerForRunningStage(t *testing.T) {
 	}
 }
 
+func TestAtomicWriteRegularFileRoundTrips(t *testing.T) {
+	t.Chdir(t.TempDir())
+	path := filepath.Join("sub", "state.json")
+	payload := []byte(`{"schema_version":2}` + "\n")
+	if err := atomicWriteRegularFile(path, payload, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("content mismatch after sync+rename: got %q want %q", got, payload)
+	}
+	// Overwrite exercises the rename-over-existing path after the fsync reorder.
+	payload2 := []byte("second\n")
+	if err := atomicWriteRegularFile(path, payload2, 0o644); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload2) {
+		t.Fatalf("overwrite content mismatch: got %q want %q", got, payload2)
+	}
+}
+
+func TestWatchStatusKeepsFinalFrameWhenStateVanishes(t *testing.T) {
+	t.Chdir(t.TempDir())
+	(store{name: "ship"}).save(&State{
+		SchemaVersion: SchemaVersion,
+		Workflow:      "ship",
+		RunID:         "abc",
+		NextStageID:   "build",
+		Stages: []StageStatus{
+			{ID: "build", Type: StageTypeCommand, Status: "completed", Command: []string{"make", "check"}},
+		},
+	})
+
+	var out strings.Builder
+	sw := &statusWatcher{name: "ship", w: &out}
+
+	// Tick 1: state present → renders a frame.
+	if done, err := sw.tick(); err != nil || done {
+		t.Fatalf("first tick: done=%v err=%v", done, err)
+	}
+	if !strings.Contains(out.String(), "ship") {
+		t.Fatalf("expected a rendered frame, got:\n%s", out.String())
+	}
+
+	// State vanishes (workflow completion / --reset window).
+	(store{name: "ship"}).delete()
+
+	// Tick 2: the first absent tick is tolerated, keeping the last frame.
+	if done, err := sw.tick(); err != nil || done {
+		t.Fatalf("watcher must tolerate one absent tick: done=%v err=%v", done, err)
+	}
+	before := out.String()
+
+	// Tick 3: still absent → conclude without wiping the final frame.
+	done, err := sw.tick()
+	if err != nil {
+		t.Fatalf("third tick error: %v", err)
+	}
+	if !done {
+		t.Fatal("expected watcher to conclude after a second absent tick")
+	}
+	final := out.String()
+	if strings.Contains(final, "No state found") {
+		t.Fatalf("must not replace the final frame with a no-state message:\n%s", final)
+	}
+	if !strings.Contains(final, "state cleared") {
+		t.Fatalf("expected a closing 'state cleared' line, got:\n%s", final)
+	}
+	if strings.Contains(strings.TrimPrefix(final, before), "\033[2J") {
+		t.Fatalf("closing tick must not clear the screen: %q", strings.TrimPrefix(final, before))
+	}
+}
+
+func TestWatchStatusReportsNoStateWhenNeverSeen(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out strings.Builder
+	sw := &statusWatcher{name: "ship", w: &out}
+	done, err := sw.tick()
+	if err != nil {
+		t.Fatalf("tick error: %v", err)
+	}
+	if !done {
+		t.Fatal("expected watcher to conclude when no state ever existed")
+	}
+	if !strings.Contains(out.String(), "No state found") {
+		t.Fatalf("expected no-state message, got:\n%s", out.String())
+	}
+}
+
 func TestRunDiagramShowsFlowAndCycleState(t *testing.T) {
 	wf := testWorkflow([]Stage{
 		{ID: "build", Type: StageTypeAgent, Prompt: "build"},
@@ -96,10 +192,15 @@ func TestRunDiagramShowsFlowAndCycleState(t *testing.T) {
 		t.Fatalf("run diagram error: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"flow:", "✓ build", "* check", "○ review", "review ↺ build", "used 1"} {
+	for _, want := range []string{"flow:", "✓ build", "* check", "○ review", "↺ build", "used 1"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in run diagram:\n%s", want, got)
 		}
+	}
+	// The cycle target here is the first stage ("build"), so the diagram must not
+	// claim the last stage ("review") is the one looping back.
+	if strings.Contains(got, "review ↺") {
+		t.Fatalf("cycle edge must not be sourced from the last stage:\n%s", got)
 	}
 }
 

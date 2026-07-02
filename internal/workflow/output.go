@@ -27,6 +27,8 @@ func stopReason(result *engine.Result) string {
 		return "max_iterations"
 	case engine.ReasonFailStreak:
 		return "fail_streak"
+	case engine.ReasonCommandFailed:
+		return "command_failed"
 	case engine.ReasonInterrupted:
 		return "interrupted"
 	default:
@@ -108,9 +110,11 @@ func writeRunDiagram(w io.Writer, wf Workflow, state *State, spinner string) err
 		return err
 	}
 	if wf.Cycle != nil {
-		if _, err := fmt.Fprintf(w, "  %scycle:%s %s %s↺%s %s (max %d, used %d)\n",
+		// Any stage can request the cycle, not just the last one, so the diagram
+		// no longer labels a source stage (which would be a structurally wrong flow
+		// when a middle stage cycles). Show only the cycle target and usage.
+		if _, err := fmt.Fprintf(w, "  %scycle:%s %s↺%s %s (max %d, used %d)\n",
 			ui.Dim, ui.Reset,
-			workflowLastStageID(wf),
 			ui.Magenta, ui.Reset,
 			wf.Cycle.Target,
 			wf.Cycle.Max,
@@ -132,11 +136,4 @@ func stageStatusByID(state *State, id string) StageStatus {
 		}
 	}
 	return StageStatus{ID: id, Status: "pending"}
-}
-
-func workflowLastStageID(wf Workflow) string {
-	if len(wf.Stages) == 0 {
-		return "-"
-	}
-	return wf.Stages[len(wf.Stages)-1].ID
 }

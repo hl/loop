@@ -13,6 +13,11 @@ import (
 	"github.com/hl/brr/internal/fsutil"
 )
 
+// maxWorkflowFileSize bounds how much of a workflow YAML file brr will read.
+// Workflows are short stage lists; 1 MiB is generous while preventing a planted
+// oversized file from exhausting memory.
+const maxWorkflowFileSize = 1 << 20 // 1 MiB
+
 func Load(data []byte) (Workflow, error) {
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
@@ -37,7 +42,7 @@ func Resolve(name string) ([]byte, error) {
 	}
 
 	projectPath := filepath.Join(".brr", "workflows", name+".yaml")
-	if data, err := fsutil.ReadRegularFile(projectPath); err == nil {
+	if data, err := fsutil.ReadRegularFileCapped(projectPath, maxWorkflowFileSize); err == nil {
 		return data, nil
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading %s: %w", projectPath, err)
@@ -47,7 +52,7 @@ func Resolve(name string) ([]byte, error) {
 	if configDir, err := os.UserConfigDir(); err == nil {
 		userPath := filepath.Join(configDir, "brr", "workflows", name+".yaml")
 		configHint = userPath
-		if data, err := fsutil.ReadRegularFile(userPath); err == nil {
+		if data, err := fsutil.ReadRegularFileCapped(userPath, maxWorkflowFileSize); err == nil {
 			return data, nil
 		} else if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("reading %s: %w", userPath, err)
@@ -122,6 +127,12 @@ func validateStage(wf Workflow, stage Stage, path string) error {
 		}
 		if len(stage.Command) > 0 {
 			return fmt.Errorf("%s.command is only valid for command stages", path)
+		}
+		// A negative max is neither "unset" (which falls back to defaults.max) nor a
+		// valid iteration count, so reject it explicitly rather than silently
+		// substituting the default.
+		if stage.Max < 0 {
+			return fmt.Errorf("%s.max must be >= 1 for agent stages, got %d", path, stage.Max)
 		}
 		if effectiveMax(wf, stage) < 1 {
 			return fmt.Errorf("%s.max must be >= 1 for agent stages", path)

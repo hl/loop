@@ -10,9 +10,9 @@ Configuration defines how brr discovers, loads, and validates its settings. It p
 2. The global config path follows OS conventions: `~/.config/brr/config.yaml` on Linux, `~/Library/Application Support/brr/config.yaml` on macOS, `%AppData%\brr\config.yaml` on Windows.
 3. At least one config source must exist. If neither global nor project-local config is found, brr reports an error identifying both searched paths.
 4. A valid config must contain a `default` key naming the default profile, and a `profiles` map with at least one entry.
-5. The default profile name must reference a profile that exists in the `profiles` map.
+5. The default profile name must reference a profile that exists in the `profiles` map. Profile names are matched case-insensitively (`default: MyAgent` resolves `profiles.myagent`).
 6. Each profile must have a non-empty `command` field and an optional `args` list of strings.
-7. When resolving a profile by name, the system returns the full command as `[command] + args`. An empty profile name resolves to the default profile.
+7. When resolving a profile by name, the system returns the full command as `[command] + args`. An empty profile name resolves to the default profile. Name matching is case-insensitive, so `-p MyAgent` and `-p myagent` select the same profile.
 8. Requesting a profile that does not exist in the `profiles` map produces an error naming the missing profile.
 9. Error messages for config loading failures reference the specific config file path. Validation errors identify the invalid field but not the source file, since settings are merged from multiple sources.
 

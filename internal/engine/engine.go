@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -17,11 +18,18 @@ import (
 	"github.com/hl/brr/internal/ui"
 )
 
-// gitTreeDirty reports whether the git working tree has uncommitted changes.
-// Returns false if git is not available or the directory is not a repository.
-var gitTreeDirty = func() bool {
+// gitTreeSnapshot returns an opaque fingerprint of the git working tree state
+// (the `git status --porcelain` output). Callers only compare successive
+// snapshots for equality to detect whether the tree changed. The second return
+// value is false if git is not available or the directory is not a repository,
+// in which case progress cannot be detected and failures are counted normally.
+// It is a package-level var so tests can stub the tree state.
+var gitTreeSnapshot = func() (string, bool) {
 	out, err := exec.Command("git", "status", "--porcelain").Output()
-	return err == nil && len(strings.TrimSpace(string(out))) > 0
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
 }
 
 const maxApprovalFileSize = 4096
@@ -50,6 +58,7 @@ const (
 	ReasonMaxIterations                   // max iteration count reached
 	ReasonFailStreak                      // too many consecutive failures
 	ReasonInterrupted                     // user signal (Ctrl+C / SIGTERM)
+	ReasonCommandFailed                   // a workflow command stage exited non-zero (single gate failure)
 )
 
 // Result carries the structured stop reason from a completed engine run.
@@ -106,9 +115,14 @@ func Run(opts Options) (*Result, error) {
 	defer func() { removeIfRegular(SignalNeedsApproval) }()
 	defer func() { removeIfRegular(SignalCycle) }()
 
-	// Track the currently running subprocess so we can forward signals
+	// Track the currently running subprocess so we can forward signals.
+	// pendingSigINT/pendingSigTERM record signals that arrive while currentCmd
+	// is nil (the window between cmd.Start() and publication); they are all
+	// guarded by mu so the publish and the record decision are serialized.
 	var mu sync.Mutex
 	var currentCmd *exec.Cmd
+	var pendingSigINT int // highest SIGINT escalation level seen with no child (2=INT, 3=KILL)
+	var pendingSigTERM bool
 
 	// Signal handling: three levels
 	// 1st Ctrl+C: finish current iteration, then stop
@@ -135,8 +149,12 @@ func Run(opts Options) (*Result, error) {
 					stopping.Store(true)
 					mu.Lock()
 					cmd := currentCmd
-					mu.Unlock()
-					if cmd != nil && cmd.Process != nil {
+					if cmd == nil || cmd.Process == nil {
+						// No child yet — record so the publisher forwards it.
+						pendingSigTERM = true
+						mu.Unlock()
+					} else {
+						mu.Unlock()
 						if err := killGroup(cmd, sigTERM); err != nil {
 							fmt.Fprintf(os.Stderr, "warning: failed to forward SIGTERM to child: %v\n", err)
 						}
@@ -155,8 +173,13 @@ func Run(opts Options) (*Result, error) {
 				case 2:
 					mu.Lock()
 					cmd := currentCmd
-					mu.Unlock()
-					if cmd != nil && cmd.Process != nil {
+					if cmd == nil || cmd.Process == nil {
+						if pendingSigINT < 2 {
+							pendingSigINT = 2
+						}
+						mu.Unlock()
+					} else {
+						mu.Unlock()
 						if err := killGroup(cmd, sigINT); err != nil {
 							fmt.Fprintf(os.Stderr, "warning: failed to interrupt child: %v\n", err)
 						}
@@ -164,8 +187,11 @@ func Run(opts Options) (*Result, error) {
 				default:
 					mu.Lock()
 					cmd := currentCmd
-					mu.Unlock()
-					if cmd != nil && cmd.Process != nil {
+					if cmd == nil || cmd.Process == nil {
+						pendingSigINT = 3
+						mu.Unlock()
+					} else {
+						mu.Unlock()
 						if err := killGroup(cmd, sigKILL); err != nil {
 							fmt.Fprintf(os.Stderr, "warning: failed to force-kill child: %v\n", err)
 						}
@@ -203,6 +229,10 @@ func Run(opts Options) (*Result, error) {
 			ui.Dim, time.Now().Format("15:04:05"), ui.Reset,
 		)
 
+		// Snapshot the working tree before the iteration so we can tell whether
+		// the agent made progress (changed the tree) if the command later fails.
+		treeBefore, treeTracked := gitTreeSnapshot()
+
 		// Run the command with prompt piped to stdin.
 		cmd := exec.Command(opts.Command[0], opts.Command[1:]...)
 		cmd.Stdin = strings.NewReader(opts.Prompt)
@@ -233,7 +263,20 @@ func Run(opts Options) (*Result, error) {
 
 		mu.Lock()
 		currentCmd = cmd
+		// Reconcile signals that arrived during the Start→publish window: the
+		// handler saw currentCmd == nil and recorded them instead of forwarding.
+		// Reading and clearing under the same lock as the publish guarantees
+		// exactly-once delivery with the handler (no drop, no double-send).
+		pInt := pendingSigINT
+		pTerm := pendingSigTERM
+		pendingSigINT = 0
+		pendingSigTERM = false
 		mu.Unlock()
+		for _, sig := range pendingSignalsToForward(pInt, pTerm) {
+			if err := killGroup(cmd, sig); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to forward pending signal to child: %v\n", err)
+			}
+		}
 
 		err := cmd.Wait()
 
@@ -245,15 +288,18 @@ func Run(opts Options) (*Result, error) {
 		// that outlive the agent process and would otherwise accumulate across iterations.
 		reapGroup(cmd)
 
-		// Check for signal files immediately after subprocess exits
-		if sig := checkSignalFiles(); sig != nil {
-			return &Result{Reason: sig.reason, ApprovalContent: sig.approvalContent, FailedContent: sig.failedContent}, nil
-		}
-
-		// If user requested stop (first Ctrl+C), exit gracefully now that the iteration is done
+		// If the user requested stop (Ctrl+C / SIGTERM), that wins over any signal
+		// file the agent happened to write on its way out. The interrupt exits
+		// with status 130 and preserved state (workflow resume, cli exit code)
+		// instead of masking the stop as complete/failed/approval/cycle.
 		if stopping.Load() {
 			fmt.Fprintf(os.Stderr, "\n  %s%sStopped after iteration %d%s.\n", ui.Bold, ui.Yellow, iterNum, ui.Reset)
 			return &Result{Reason: ReasonInterrupted}, ErrInterrupted
+		}
+
+		// Check for signal files immediately after subprocess exits
+		if sig := checkSignalFiles(); sig != nil {
+			return &Result{Reason: sig.reason, ApprovalContent: sig.approvalContent, FailedContent: sig.failedContent}, nil
 		}
 
 		if err != nil {
@@ -262,12 +308,17 @@ func Run(opts Options) (*Result, error) {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				rc = exitErr.ExitCode()
 			}
-			// If the working tree is dirty, the agent made progress before crashing
-			// (e.g. context exhaustion, timeout). Don't count it toward the fail streak —
-			// the next iteration's recovery phase will pick up where it left off.
-			if gitTreeDirty() {
+			// If the working tree *changed* during this iteration, the agent made
+			// progress before crashing (e.g. context exhaustion, timeout). Don't
+			// count it toward the fail streak — the next iteration's recovery phase
+			// will pick up where it left off. A tree that is merely dirty but
+			// unchanged (pre-existing edits, a deterministic no-op failure) still
+			// counts, so the fail-streak breaker cannot be permanently disabled.
+			treeAfter, treeTrackedAfter := gitTreeSnapshot()
+			progressed := treeTracked && treeTrackedAfter && treeAfter != treeBefore
+			if progressed {
 				failStreak = 0
-				fmt.Fprintf(os.Stderr, "  %s%s⟳ Iteration %d crashed%s (exit %d) — dirty tree detected, progress was made. Retrying.\n",
+				fmt.Fprintf(os.Stderr, "  %s%s⟳ Iteration %d crashed%s (exit %d) — working tree changed, progress was made. Retrying.\n",
 					ui.Bold, ui.Yellow, iterNum, ui.Reset, rc,
 				)
 			} else {
@@ -282,16 +333,46 @@ func Run(opts Options) (*Result, error) {
 			}
 		} else {
 			failStreak = 0
+			lastErr = nil
 		}
 
 		// i counts total attempts, including failures
 		i++
 	}
 
+	// A pending interrupt wins over the max-iterations exit: if the loop reached
+	// its limit in the same window a Ctrl+C/SIGTERM arrived, stop with exit 130
+	// and preserved state rather than silently reporting a clean max-iterations
+	// finish (which, in a workflow, would advance to the next stage).
+	if stopping.Load() {
+		fmt.Fprintf(os.Stderr, "\n  %s%sStopped%s.\n", ui.Bold, ui.Yellow, ui.Reset)
+		return &Result{Reason: ReasonInterrupted}, ErrInterrupted
+	}
+
 	if lastErr != nil {
 		return &Result{Reason: ReasonMaxIterations}, fmt.Errorf("last iteration failed: %w", lastErr)
 	}
 	return &Result{Reason: ReasonMaxIterations}, nil
+}
+
+// pendingSignalsToForward returns, in delivery order, the signals that must be
+// forwarded to a freshly-published child to make up for signals that arrived
+// during the Start→publish window (when the handler saw a nil child). SIGTERM,
+// if seen, is delivered first; then the highest SIGINT escalation level reached
+// (SIGINT at level 2, SIGKILL at level 3). This preserves the graceful-interrupt
+// escalation instead of letting a dropped level-2 SIGINT skip straight to KILL.
+func pendingSignalsToForward(pendingINT int, pendingTERM bool) []syscall.Signal {
+	var sigs []syscall.Signal
+	if pendingTERM {
+		sigs = append(sigs, sigTERM)
+	}
+	switch {
+	case pendingINT >= 3:
+		sigs = append(sigs, sigKILL)
+	case pendingINT == 2:
+		sigs = append(sigs, sigINT)
+	}
+	return sigs
 }
 
 // removeIfRegular removes path only if it is a regular file.

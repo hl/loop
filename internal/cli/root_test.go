@@ -79,6 +79,41 @@ func TestResolvePromptNamedFromProject(t *testing.T) {
 	}
 }
 
+func TestResolvePromptEmptyNamedPromptRejected(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	if err := os.MkdirAll(filepath.Join(".brr", "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".brr", "prompts", "build.md"), []byte("   \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty resolved prompts must be rejected in resolvePrompt itself so workflow
+	// stages (run and validate) get the same guard as `brr run`.
+	_, err := resolvePrompt("build")
+	if err == nil {
+		t.Fatal("expected empty named prompt to be rejected")
+	}
+	if !strings.Contains(err.Error(), "prompt is empty") {
+		t.Fatalf("expected 'prompt is empty' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(".brr", "prompts", "build.md")) {
+		t.Fatalf("expected error to name the resolved source, got: %v", err)
+	}
+}
+
+func TestResolvePromptEmptyInlineRejected(t *testing.T) {
+	t.Chdir(t.TempDir())
+	_, err := resolvePrompt("   ")
+	if err == nil {
+		t.Fatal("expected whitespace-only inline prompt to be rejected")
+	}
+	if !strings.Contains(err.Error(), "prompt is empty") {
+		t.Fatalf("expected 'prompt is empty' error, got: %v", err)
+	}
+}
+
 func TestResolvePromptMissingFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 
@@ -270,6 +305,75 @@ func TestResolvePromptNamedFileTooLarge(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("expected size error, got: %v", err)
+	}
+}
+
+func TestResolveWorkflowPromptRejectsAbsolutePath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	secret := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(secret, []byte("top secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A workflow prompt must not read an absolute out-of-tree file.
+	_, err := resolveWorkflowPrompt(secret)
+	if err == nil {
+		t.Fatal("expected absolute workflow prompt path to be rejected")
+	}
+	if strings.Contains(err.Error(), "top secret") {
+		t.Fatalf("error must not leak file contents: %v", err)
+	}
+	if !strings.Contains(err.Error(), "working tree") {
+		t.Fatalf("expected working-tree restriction error, got: %v", err)
+	}
+}
+
+func TestResolveWorkflowPromptRejectsTraversal(t *testing.T) {
+	t.Chdir(t.TempDir())
+	_, err := resolveWorkflowPrompt("../../etc/passwd")
+	if err == nil {
+		t.Fatal("expected .. traversal to be rejected")
+	}
+	if !strings.Contains(err.Error(), "working tree") {
+		t.Fatalf("expected working-tree restriction error, got: %v", err)
+	}
+}
+
+func TestResolveWorkflowPromptAllowsNamedRelativeAndInline(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(".brr", "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".brr", "prompts", "build.md"), []byte("named"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if text, err := resolveWorkflowPrompt("build"); err != nil || text != "named" {
+		t.Fatalf("named prompt: text=%q err=%v", text, err)
+	}
+	if err := os.WriteFile("local.md", []byte("relative"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if text, err := resolveWorkflowPrompt("local.md"); err != nil || text != "relative" {
+		t.Fatalf("relative in-tree file: text=%q err=%v", text, err)
+	}
+	// Inline text (including punctuation like "..") must still pass through.
+	if text, err := resolveWorkflowPrompt("Review the diff... carefully"); err != nil || text != "Review the diff... carefully" {
+		t.Fatalf("inline: text=%q err=%v", text, err)
+	}
+}
+
+func TestResolvePromptRootStillReadsAbsolute(t *testing.T) {
+	t.Chdir(t.TempDir())
+	f := filepath.Join(t.TempDir(), "task.md")
+	if err := os.WriteFile(f, []byte("do it"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The root CLI arg is typed by the user, so absolute paths stay permissive.
+	text, err := resolvePrompt(f)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if text != "do it" {
+		t.Fatalf("expected file content, got %q", text)
 	}
 }
 

@@ -128,6 +128,39 @@ func TestSignalThirdCtrlCForceKills(t *testing.T) {
 	}
 }
 
+func TestSignalInterruptBeatsSignalFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	// The child sleeps (giving the SIGINT time to set the stopping flag), then
+	// writes .brr-complete and exits 0. The interrupt must win over the complete
+	// signal: the engine stops with ReasonInterrupted, not ReasonComplete.
+	cmd := []string{"sh", "-c", "sleep 0.4 && touch " + SignalComplete}
+
+	var result *Result
+	var runErr error
+	done := make(chan struct{})
+	go func() {
+		result, runErr = Run(Options{Prompt: "test", Max: 1, Command: cmd})
+		close(done)
+	}()
+
+	time.Sleep(150 * time.Millisecond)
+	syscall.Kill(os.Getpid(), syscall.SIGINT)
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("engine did not stop within 10s")
+	}
+
+	if !errors.Is(runErr, ErrInterrupted) {
+		t.Errorf("expected ErrInterrupted, got: %v", runErr)
+	}
+	if result == nil || result.Reason != ReasonInterrupted {
+		t.Errorf("expected ReasonInterrupted (interrupt beats .brr-complete), got %#v", result)
+	}
+}
+
 func TestSignalSIGTERMForwardsToChild(t *testing.T) {
 	t.Chdir(t.TempDir())
 

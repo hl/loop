@@ -99,6 +99,16 @@ func TestFormatFailStreak(t *testing.T) {
 	}
 }
 
+func TestFormatCommandFailed(t *testing.T) {
+	title, body := format(&engine.Result{Reason: engine.ReasonCommandFailed})
+	if title != "brr — command failed" {
+		t.Errorf("unexpected title: %q", title)
+	}
+	if body != "A command stage exited non-zero." {
+		t.Errorf("unexpected body: %q", body)
+	}
+}
+
 func TestFormatWorkflowError(t *testing.T) {
 	title, body := formatWorkflowError(errors.New("stage 1 (prepare): prompt file not found: prepare.md"))
 	if title != "brr — workflow error" {
@@ -116,6 +126,23 @@ func TestFormatWorkflowErrorWithoutError(t *testing.T) {
 	}
 	if body != "The workflow stopped with an error." {
 		t.Errorf("unexpected body: %q", body)
+	}
+}
+
+func TestNotifySendArgsInsertsOptionTerminator(t *testing.T) {
+	// A title and body that begin with "-" must survive as positional args.
+	args := notifySendArgs("--version mismatch", "-rf details")
+	want := []string{"notify-send", "--", "--version mismatch", "-rf details"}
+	if len(args) != len(want) {
+		t.Fatalf("expected %d args, got %d: %v", len(want), len(args), args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("arg %d: expected %q, got %q", i, want[i], args[i])
+		}
+	}
+	if args[1] != "--" {
+		t.Errorf("expected option terminator -- before positional args, got %q", args[1])
 	}
 }
 

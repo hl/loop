@@ -25,6 +25,26 @@ func readState(t *testing.T, name string) *State {
 	return &state
 }
 
+func readEvents(t *testing.T, name string) []Event {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(StateDir, name+".events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []Event
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var e Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatalf("decoding event %q: %v", line, err)
+		}
+		events = append(events, e)
+	}
+	return events
+}
+
 func testWorkflow(stages []Stage, cycle *Cycle) Workflow {
 	return Workflow{
 		Version:  SchemaVersion,

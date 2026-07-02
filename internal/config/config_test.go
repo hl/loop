@@ -53,6 +53,134 @@ profiles:
 	}
 }
 
+func TestLoadProfileNamesCaseInsensitive(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	// viper lowercases map keys, so an uppercase `default` and `-p` value must
+	// still reach a mixed-case profile.
+	yaml := `default: MyAgent
+profiles:
+  MyAgent:
+    command: myagent
+    args: [--fast]
+`
+	if err := os.WriteFile(".brr.yaml", []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Default profile resolves despite the uppercase name.
+	cmd, name, err := cfg.ResolveProfile("")
+	if err != nil {
+		t.Fatalf("resolving default profile: %v", err)
+	}
+	if cmd[0] != "myagent" {
+		t.Errorf("expected command 'myagent', got %q", cmd[0])
+	}
+	if name != "myagent" {
+		t.Errorf("expected resolved name 'myagent', got %q", name)
+	}
+
+	// A mixed-case `-p` value resolves to the same profile.
+	if _, _, err := cfg.ResolveProfile("MYAGENT"); err != nil {
+		t.Errorf("expected mixed-case profile lookup to succeed, got: %v", err)
+	}
+}
+
+// writeGlobalConfig points os.UserConfigDir at a temp HOME and writes a global
+// brr config there, returning the project working directory to chdir into.
+func writeGlobalConfig(t *testing.T, globalYAML string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+	brrDir := filepath.Join(configDir, "brr")
+	if err := os.MkdirAll(brrDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brrDir, "config.yaml"), []byte(globalYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadProjectProfileDoesNotInheritGlobalArgs(t *testing.T) {
+	writeGlobalConfig(t, `default: claude
+profiles:
+  claude:
+    command: claude
+    args: [--dangerously-skip-permissions, --model, opus]
+`)
+
+	t.Chdir(t.TempDir())
+	// The project profile sets a command but no args; it must NOT inherit the
+	// global profile's dangerous args.
+	if err := os.WriteFile(".brr.yaml", []byte(`profiles:
+  claude:
+    command: echo
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	cmd, _, err := cfg.ResolveProfile("claude")
+	if err != nil {
+		t.Fatalf("resolving claude: %v", err)
+	}
+	if len(cmd) != 1 || cmd[0] != "echo" {
+		t.Errorf("expected project profile to replace global atomically ([echo]), got %v", cmd)
+	}
+}
+
+func TestLoadProjectProfileMergesAtomicallyWithDistinctGlobal(t *testing.T) {
+	writeGlobalConfig(t, `default: claude
+profiles:
+  claude:
+    command: claude
+    args: [--global-only]
+`)
+
+	t.Chdir(t.TempDir())
+	// Project adds a new profile and does not touch the global one.
+	if err := os.WriteFile(".brr.yaml", []byte(`profiles:
+  local:
+    command: local
+    args: [--local]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Global default and profile survive.
+	if cfg.Default != "claude" {
+		t.Errorf("expected default 'claude', got %q", cfg.Default)
+	}
+	claude, _, err := cfg.ResolveProfile("claude")
+	if err != nil || len(claude) != 2 || claude[1] != "--global-only" {
+		t.Errorf("expected global claude profile intact, got %v (err %v)", claude, err)
+	}
+	// Project profile is available.
+	local, _, err := cfg.ResolveProfile("local")
+	if err != nil || local[0] != "local" {
+		t.Errorf("expected project 'local' profile, got %v (err %v)", local, err)
+	}
+}
+
 func TestLoadProjectConfigSymlinkRejected(t *testing.T) {
 	t.Chdir(t.TempDir())
 
@@ -87,6 +215,27 @@ func TestLoadProjectConfigDirectoryRejected(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected directory project config to be rejected")
+	}
+	if !strings.Contains(err.Error(), ".brr.yaml") {
+		t.Errorf("expected error to mention .brr.yaml, got: %v", err)
+	}
+}
+
+func TestLoadRejectsOversizedConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	// A planted, oversized .brr.yaml must be rejected rather than read whole.
+	big := make([]byte, maxConfigFileSize+1)
+	for i := range big {
+		big[i] = 'a'
+	}
+	if err := os.WriteFile(".brr.yaml", big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for oversized config file")
 	}
 	if !strings.Contains(err.Error(), ".brr.yaml") {
 		t.Errorf("expected error to mention .brr.yaml, got: %v", err)

@@ -76,25 +76,65 @@ func WatchStatus(name string, w io.Writer, interval time.Duration) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	frame := 0
+	watcher := &statusWatcher{name: name, w: w}
 	for {
-		state, err := (store{name: name}).load()
+		done, err := watcher.tick()
 		if err != nil {
-			if os.IsNotExist(err) {
-				_, err := fmt.Fprintf(w, "\033[H\033[2JNo state found for workflow %q.\n", name)
-				return err
-			}
-			return fmt.Errorf("reading workflow state: %w", err)
-		}
-		if _, err := fmt.Fprint(w, "\033[H\033[2J"); err != nil {
 			return err
 		}
-		if err := writeStatusFrame(w, state, statusSpinnerFrames[frame%len(statusSpinnerFrames)]); err != nil {
-			return err
+		if done {
+			return nil
 		}
-		frame++
 		<-ticker.C
 	}
+}
+
+// statusWatcher renders successive frames of a workflow's saved state. It is
+// split out from WatchStatus so the frame/miss transitions can be unit-tested
+// without real timers.
+type statusWatcher struct {
+	name     string
+	w        io.Writer
+	sawState bool
+	misses   int
+	frame    int
+}
+
+// tick renders a single frame. It returns done=true when the watch should stop.
+func (sw *statusWatcher) tick() (bool, error) {
+	state, err := (store{name: sw.name}).load()
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return true, fmt.Errorf("reading workflow state: %w", err)
+		}
+		if !sw.sawState {
+			// Never rendered a frame — the state was already gone at startup, so the
+			// original "no state found" message is the correct terminal output.
+			_, err := fmt.Fprintf(sw.w, "\033[H\033[2JNo state found for workflow %q.\n", sw.name)
+			return true, err
+		}
+		sw.misses++
+		if sw.misses <= 1 {
+			// Tolerate a single absent tick: workflow completion and `--reset` both
+			// delete the state file in a window where it legitimately reappears (or
+			// stays gone because the run finished). Keep the last frame on screen.
+			return false, nil
+		}
+		// The state is durably gone. Leave the final all-green frame intact (no
+		// screen clear) and print a clear closing line beneath it.
+		_, err := fmt.Fprintf(sw.w, "  %sstate cleared — workflow finished or was reset%s\n", ui.Dim, ui.Reset)
+		return true, err
+	}
+	sw.misses = 0
+	sw.sawState = true
+	if _, err := fmt.Fprint(sw.w, "\033[H\033[2J"); err != nil {
+		return true, err
+	}
+	if err := writeStatusFrame(sw.w, state, statusSpinnerFrames[sw.frame%len(statusSpinnerFrames)]); err != nil {
+		return true, err
+	}
+	sw.frame++
+	return false, nil
 }
 
 func writeStatusFrame(w io.Writer, state *State, spinner string) error {
