@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- An empty resolved prompt is now rejected for workflow agent stages, by `brr workflow run` and `brr workflow validate`, not just `brr run`. The non-empty check moved into `resolvePrompt` itself (naming the resolved source — file path or inline text), so an empty `.brr/prompts/<name>.md` no longer validates cleanly and then loops an instruction-less agent.
+
 - Workflow state writes now fsync the temp file before renaming it into place (and fsync the parent directory on Unix). Previously a power loss could make the rename durable ahead of the data blocks, leaving a zero-byte state file that failed to parse — so the workflow silently "started fresh" and repeated already-completed stages.
 
 - The run-diagram cycle line no longer claims the last stage is the one looping back. It rendered `<last-stage> ↺ <target>` regardless of which stage requested the cycle — a structurally wrong flow when a middle stage cycles. It now shows just `↺ <target> (max N, used M)`.

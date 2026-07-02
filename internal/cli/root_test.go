@@ -79,6 +79,41 @@ func TestResolvePromptNamedFromProject(t *testing.T) {
 	}
 }
 
+func TestResolvePromptEmptyNamedPromptRejected(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	if err := os.MkdirAll(filepath.Join(".brr", "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".brr", "prompts", "build.md"), []byte("   \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty resolved prompts must be rejected in resolvePrompt itself so workflow
+	// stages (run and validate) get the same guard as `brr run`.
+	_, err := resolvePrompt("build")
+	if err == nil {
+		t.Fatal("expected empty named prompt to be rejected")
+	}
+	if !strings.Contains(err.Error(), "prompt is empty") {
+		t.Fatalf("expected 'prompt is empty' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(".brr", "prompts", "build.md")) {
+		t.Fatalf("expected error to name the resolved source, got: %v", err)
+	}
+}
+
+func TestResolvePromptEmptyInlineRejected(t *testing.T) {
+	t.Chdir(t.TempDir())
+	_, err := resolvePrompt("   ")
+	if err == nil {
+		t.Fatal("expected whitespace-only inline prompt to be rejected")
+	}
+	if !strings.Contains(err.Error(), "prompt is empty") {
+		t.Fatalf("expected 'prompt is empty' error, got: %v", err)
+	}
+}
+
 func TestResolvePromptMissingFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 

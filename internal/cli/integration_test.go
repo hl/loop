@@ -320,6 +320,34 @@ func TestWorkflowValidateIntegration(t *testing.T) {
 	}
 }
 
+func TestWorkflowValidateRejectsEmptyPrompt(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestConfig(t)
+	if err := os.MkdirAll(filepath.Join(".brr", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(".brr", "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(".brr", "prompts", "build.md"), []byte("   \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wf := "version: 2\ndefaults: {max: 1}\nstages:\n  - id: build\n    type: agent\n    prompt: build\n"
+	if err := os.WriteFile(filepath.Join(".brr", "workflows", "ship.yaml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newTestWorkflowValidateCmd()
+	cmd.SetArgs([]string{"ship"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected validate to reject an empty resolved stage prompt")
+	}
+	if !strings.Contains(err.Error(), "prompt is empty") {
+		t.Fatalf("expected 'prompt is empty' error, got: %v", err)
+	}
+}
+
 func TestWorkflowRunIntegration(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t)

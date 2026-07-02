@@ -98,10 +98,6 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if strings.TrimSpace(promptText) == "" {
-		return fmt.Errorf("prompt is empty")
-	}
-
 	doNotify, err := cmd.Flags().GetBool("notify")
 	if err != nil {
 		return fmt.Errorf("reading --notify flag: %w", err)
@@ -133,23 +129,39 @@ func run(cmd *cobra.Command, args []string) error {
 	return runErr
 }
 
-// resolvePrompt reads a prompt from a file path, .brr/prompts/<name>.md, or returns it as inline text.
+// resolvePrompt reads a prompt from a file path, .brr/prompts/<name>.md, or
+// returns it as inline text. The final resolved prompt must be non-empty after
+// trimming (prompt-resolution.md requirement 10); an empty result errors and
+// names the source it came from.
 func resolvePrompt(nameOrPath string) (string, error) {
+	text, source, err := resolvePromptText(nameOrPath)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("prompt is empty: %s", source)
+	}
+	return text, nil
+}
+
+// resolvePromptText resolves nameOrPath to prompt text and a human-readable
+// description of where it came from, without checking emptiness.
+func resolvePromptText(nameOrPath string) (text, source string, err error) {
 	// If it's an existing regular file, read it directly (rejects symlinks, FIFOs, etc.)
 	if fi, statErr := os.Lstat(nameOrPath); statErr == nil {
 		if fi.IsDir() {
 			// Don't treat directories as prompt files — fall through to named prompt lookup
 		} else if text, err := readPromptFile(nameOrPath); err == nil {
-			return text, nil
+			return text, fmt.Sprintf("prompt file %s", nameOrPath), nil
 		} else {
-			return "", fmt.Errorf("reading prompt file %s: %w", nameOrPath, err)
+			return "", "", fmt.Errorf("reading prompt file %s: %w", nameOrPath, err)
 		}
 	} else if looksLikeFilePath(nameOrPath) {
 		// It looks like a file path — distinguish "not found" from other stat errors
 		if os.IsNotExist(statErr) {
-			return "", fmt.Errorf("prompt file not found: %s", nameOrPath)
+			return "", "", fmt.Errorf("prompt file not found: %s", nameOrPath)
 		}
-		return "", fmt.Errorf("accessing prompt file %s: %w", nameOrPath, statErr)
+		return "", "", fmt.Errorf("accessing prompt file %s: %w", nameOrPath, statErr)
 	}
 
 	// For bare names (no spaces), try named prompt resolution
@@ -158,30 +170,30 @@ func resolvePrompt(nameOrPath string) (string, error) {
 
 		// Reject path traversal attempts
 		if strings.Contains(name, "..") {
-			return "", fmt.Errorf("invalid prompt name: %q", name)
+			return "", "", fmt.Errorf("invalid prompt name: %q", name)
 		}
 
 		// Try .brr/prompts/<name>.md
 		projectPath := filepath.Join(".brr", "prompts", name+".md")
 		if text, err := readPromptFile(projectPath); err == nil {
-			return text, nil
+			return text, fmt.Sprintf("prompt %s", projectPath), nil
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("reading %s: %w", projectPath, err)
+			return "", "", fmt.Errorf("reading %s: %w", projectPath, err)
 		}
 
 		// Try user config dir prompts/<name>.md
 		if configDir, err := os.UserConfigDir(); err == nil {
 			userPath := filepath.Join(configDir, "brr", "prompts", name+".md")
 			if text, err := readPromptFile(userPath); err == nil {
-				return text, nil
+				return text, fmt.Sprintf("prompt %s", userPath), nil
 			} else if !errors.Is(err, os.ErrNotExist) {
-				return "", fmt.Errorf("reading %s: %w", userPath, err)
+				return "", "", fmt.Errorf("reading %s: %w", userPath, err)
 			}
 		}
 	}
 
 	// Treat as inline prompt text
-	return nameOrPath, nil
+	return nameOrPath, "inline prompt text", nil
 }
 
 func readPromptFile(path string) (string, error) {

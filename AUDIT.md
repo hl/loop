@@ -14,7 +14,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | W1 | medium | confirmed | engine+workflow | Interrupt swallowed when stage ends via signal file or max iterations | fixed |
 | S2 | medium | confirmed | workflow | Double SIGINT delivered to command-stage child | fixed |
 | S3 | medium | likely | workflow | Race misclassifies Ctrl+C as stage failure | fixed |
-| C1 | medium | confirmed | cli | Empty resolved prompt accepted for workflow agent stages | open |
+| C1 | medium | confirmed | cli | Empty resolved prompt accepted for workflow agent stages | fixed |
 | C2 | medium | confirmed | cli | Workflow error notifications misreport the terminal event | open |
 | F2 | medium | confirmed | config | Project profile deep-merges with same-named global profile | open |
 | E2 | low | confirmed | engine | Signals during Start→publish window dropped yet consume escalation level | fixed |
