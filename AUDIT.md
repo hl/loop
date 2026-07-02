@@ -16,7 +16,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | S3 | medium | likely | workflow | Race misclassifies Ctrl+C as stage failure | fixed |
 | C1 | medium | confirmed | cli | Empty resolved prompt accepted for workflow agent stages | fixed |
 | C2 | medium | confirmed | cli | Workflow error notifications misreport the terminal event | fixed |
-| F2 | medium | confirmed | config | Project profile deep-merges with same-named global profile | open |
+| F2 | medium | confirmed | config | Project profile deep-merges with same-named global profile | fixed |
 | E2 | low | confirmed | engine | Signals during Start→publish window dropped yet consume escalation level | fixed |
 | E3 | low | likely | engine | Windows terminateTree can recurse infinitely on PID cycles | fixed |
 | W2 | low | confirmed | workflow | Single command failure recorded as `fail_streak` | fixed |

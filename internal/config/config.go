@@ -29,51 +29,52 @@ type Config struct {
 // Priority: .brr.yaml > ~/.config/brr/config.yaml.
 // Returns an error if no config is found or if a config file is malformed.
 func Load() (Config, error) {
-	var cfg Config
-	found := false
+	var global, project Config
+	globalFound, projectFound := false, false
 
-	v := viper.New()
-	v.SetConfigType("yaml")
-
-	// Layer 1: user global config
+	// Layer 1: user global config. Parse into its own Config so profiles stay
+	// distinct from the project layer and can be replaced as atomic units.
 	if configDir, err := os.UserConfigDir(); err == nil {
 		globalPath := filepath.Join(configDir, "brr", "config.yaml")
+		v := viper.New()
+		v.SetConfigType("yaml")
 		v.SetConfigFile(globalPath)
-		if err := v.MergeInConfig(); err == nil {
-			found = true
+		if err := v.ReadInConfig(); err == nil {
+			if err := v.Unmarshal(&global); err != nil {
+				return Config{}, fmt.Errorf("reading %s: %w", globalPath, err)
+			}
+			globalFound = true
 		} else if !isConfigNotFound(err) {
-			return cfg, fmt.Errorf("reading %s: %w", globalPath, err)
+			return Config{}, fmt.Errorf("reading %s: %w", globalPath, err)
 		}
 	}
 
 	// Layer 2: project config. Read through fsutil so project config never
-	// follows symlinks or other non-regular files.
+	// follows symlinks or other non-regular files, then parse it into its own
+	// Config so a project profile does not inherit fields it omits.
 	if data, err := fsutil.ReadRegularFile(".brr.yaml"); err == nil {
-		if err := v.MergeConfig(bytes.NewReader(data)); err != nil {
-			return cfg, fmt.Errorf("reading .brr.yaml: %w", err)
+		v := viper.New()
+		v.SetConfigType("yaml")
+		if err := v.ReadConfig(bytes.NewReader(data)); err != nil {
+			return Config{}, fmt.Errorf("reading .brr.yaml: %w", err)
 		}
-		found = true
+		if err := v.Unmarshal(&project); err != nil {
+			return Config{}, fmt.Errorf("reading .brr.yaml: %w", err)
+		}
+		projectFound = true
 	} else if !isConfigNotFound(err) {
-		return cfg, fmt.Errorf("reading .brr.yaml: %w", err)
+		return Config{}, fmt.Errorf("reading .brr.yaml: %w", err)
 	}
 
-	if !found {
+	if !globalFound && !projectFound {
 		configHint := "<config-dir>/brr/config.yaml"
 		if configDir, err := os.UserConfigDir(); err == nil {
 			configHint = filepath.Join(configDir, "brr", "config.yaml")
 		}
-		return cfg, fmt.Errorf("no config found (looked in .brr.yaml and %s) — run 'brr init'", configHint)
+		return Config{}, fmt.Errorf("no config found (looked in .brr.yaml and %s) — run 'brr init'", configHint)
 	}
 
-	if err := v.Unmarshal(&cfg); err != nil {
-		return cfg, err
-	}
-
-	// Profile names are matched case-insensitively. viper already lowercases
-	// map keys internally, so the default name and every lookup must be
-	// lowercased to reach an uppercase or mixed-case profile (e.g. `default:
-	// MyAgent` with `profiles: { MyAgent: ... }`).
-	cfg.Default = strings.ToLower(cfg.Default)
+	cfg := mergeConfigs(global, project)
 
 	if len(cfg.Profiles) == 0 {
 		return cfg, fmt.Errorf("no profiles defined in config — add at least one profile to your config file")
@@ -88,6 +89,30 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// mergeConfigs overlays project settings onto global ones. Profiles are merged
+// as ATOMIC units: a project profile replaces the whole same-named global
+// profile, so a project profile that sets `command` but omits `args` does not
+// silently inherit the global profile's args. Profile names are matched
+// case-insensitively (viper lowercases config map keys), and the project
+// `default` wins when set.
+func mergeConfigs(global, project Config) Config {
+	merged := Config{
+		Profiles: make(map[string]Profile, len(global.Profiles)+len(project.Profiles)),
+	}
+	for name, p := range global.Profiles {
+		merged.Profiles[strings.ToLower(name)] = p
+	}
+	for name, p := range project.Profiles {
+		merged.Profiles[strings.ToLower(name)] = p
+	}
+	merged.Default = global.Default
+	if project.Default != "" {
+		merged.Default = project.Default
+	}
+	merged.Default = strings.ToLower(merged.Default)
+	return merged
 }
 
 // isConfigNotFound returns true if the error indicates the config file doesn't exist.

@@ -91,6 +91,96 @@ profiles:
 	}
 }
 
+// writeGlobalConfig points os.UserConfigDir at a temp HOME and writes a global
+// brr config there, returning the project working directory to chdir into.
+func writeGlobalConfig(t *testing.T, globalYAML string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+	brrDir := filepath.Join(configDir, "brr")
+	if err := os.MkdirAll(brrDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brrDir, "config.yaml"), []byte(globalYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadProjectProfileDoesNotInheritGlobalArgs(t *testing.T) {
+	writeGlobalConfig(t, `default: claude
+profiles:
+  claude:
+    command: claude
+    args: [--dangerously-skip-permissions, --model, opus]
+`)
+
+	t.Chdir(t.TempDir())
+	// The project profile sets a command but no args; it must NOT inherit the
+	// global profile's dangerous args.
+	if err := os.WriteFile(".brr.yaml", []byte(`profiles:
+  claude:
+    command: echo
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	cmd, _, err := cfg.ResolveProfile("claude")
+	if err != nil {
+		t.Fatalf("resolving claude: %v", err)
+	}
+	if len(cmd) != 1 || cmd[0] != "echo" {
+		t.Errorf("expected project profile to replace global atomically ([echo]), got %v", cmd)
+	}
+}
+
+func TestLoadProjectProfileMergesAtomicallyWithDistinctGlobal(t *testing.T) {
+	writeGlobalConfig(t, `default: claude
+profiles:
+  claude:
+    command: claude
+    args: [--global-only]
+`)
+
+	t.Chdir(t.TempDir())
+	// Project adds a new profile and does not touch the global one.
+	if err := os.WriteFile(".brr.yaml", []byte(`profiles:
+  local:
+    command: local
+    args: [--local]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	// Global default and profile survive.
+	if cfg.Default != "claude" {
+		t.Errorf("expected default 'claude', got %q", cfg.Default)
+	}
+	claude, _, err := cfg.ResolveProfile("claude")
+	if err != nil || len(claude) != 2 || claude[1] != "--global-only" {
+		t.Errorf("expected global claude profile intact, got %v (err %v)", claude, err)
+	}
+	// Project profile is available.
+	local, _, err := cfg.ResolveProfile("local")
+	if err != nil || local[0] != "local" {
+		t.Errorf("expected project 'local' profile, got %v (err %v)", local, err)
+	}
+}
+
 func TestLoadProjectConfigSymlinkRejected(t *testing.T) {
 	t.Chdir(t.TempDir())
 

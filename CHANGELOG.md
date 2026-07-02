@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A project `.brr.yaml` profile no longer deep-merges with a same-named global profile. Config layers are now unmarshalled separately and merged with whole-profile replacement, so a project profile that sets `command` but omits `args` no longer silently inherits the global profile's args (e.g. `--dangerously-skip-permissions --model opus` leaking into a command that never asked for them). Profiles from different names still combine across layers.
+
 - Profile names are now matched case-insensitively, so an uppercase or mixed-case `default:` value and `-p` flag reach their profile. viper lowercases config map keys internally, so `default: MyAgent` with `profiles: { MyAgent: ... }` (or `-p MyAgent`) previously failed every invocation with `default profile "MyAgent" not found`. The default name and every profile lookup are now normalized to lowercase.
 
 - `brr <prompt> --notify` now sends a notification when the loop stops on a `.brr-cycle` signal outside a workflow. The root command returned the ".brr-cycle is only supported by 'brr workflow'" error before the notification block, so the cycle stop — a req-1 terminal event — was the only one that never pinged. The notification now dispatches before the error is returned.
