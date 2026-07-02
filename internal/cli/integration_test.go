@@ -300,6 +300,32 @@ func TestRunIntegrationCycleSignalWithoutWorkflowErrors(t *testing.T) {
 	}
 }
 
+func TestRunNotifiesOnCycleStop(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeCycleConfig(t)
+
+	var gotResult *engine.Result
+	calls := 0
+	orig := notifySend
+	notifySend = func(r *engine.Result) error { calls++; gotResult = r; return nil }
+	t.Cleanup(func() { notifySend = orig })
+
+	cmd := newTestRootCmd()
+	cmd.SetArgs([]string{"hello", "-m", "1", "-n"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "only supported by 'brr workflow'") {
+		t.Fatalf("expected workflow-only cycle error, got: %v", err)
+	}
+	// A .brr-cycle stop is the one req-1 terminal event whose notification the
+	// root command used to skip (the error returned before the notify block).
+	if calls != 1 {
+		t.Fatalf("expected exactly one notification on cycle stop, got %d", calls)
+	}
+	if gotResult == nil || gotResult.Reason != engine.ReasonCycle {
+		t.Fatalf("expected a cycle notification, got %#v", gotResult)
+	}
+}
+
 func TestRunIntegrationNoArgs(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeTestConfig(t)

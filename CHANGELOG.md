@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `brr <prompt> --notify` now sends a notification when the loop stops on a `.brr-cycle` signal outside a workflow. The root command returned the ".brr-cycle is only supported by 'brr workflow'" error before the notification block, so the cycle stop — a req-1 terminal event — was the only one that never pinged. The notification now dispatches before the error is returned.
+
 - Workflow error notifications now report the actual error instead of the stage's stop reason. A single command-stage failure used to notify "Too many consecutive failures" and a cycle-without-config error notified "cycle requested" as if the run were continuing. The error path now sends the real wrapped error (e.g. "stage build: exit status 1"), which identifies the terminal event per the notifications spec. Interrupts still send no notification.
 
 ### Changed

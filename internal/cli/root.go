@@ -120,12 +120,20 @@ func run(cmd *cobra.Command, args []string) error {
 	})
 
 	if result != nil && result.Reason == engine.ReasonCycle {
+		// A .brr-cycle stop is a req-1 terminal event, so still send the ping on
+		// --notify before returning the workflow-only error — which would otherwise
+		// short-circuit the notification block below.
+		if doNotify {
+			if nErr := notifySend(result); nErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
+			}
+		}
 		return fmt.Errorf(".brr-cycle is only supported by 'brr workflow'")
 	}
 
 	// Send notification (best-effort — failure is logged but does not affect exit code)
 	if doNotify && result != nil && result.Reason != engine.ReasonInterrupted {
-		if nErr := notify.Send(result); nErr != nil {
+		if nErr := notifySend(result); nErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
 		}
 	}
