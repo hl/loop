@@ -48,11 +48,10 @@ func killProcessTree(parentPID uint32, killParent bool) {
 		}
 	}
 
-	var terminateTree func(uint32)
-	terminateTree = func(pid uint32) {
-		for _, childPID := range children[pid] {
-			terminateTree(childPID)
-		}
+	// Post-order traversal with a visited set (see orderTreePIDs) so PID-reuse
+	// cycles in the Toolhelp snapshot cannot cause unbounded recursion and leave
+	// orphans running mid-cleanup.
+	for _, pid := range orderTreePIDs(children, parentPID) {
 		if pid != parentPID || killParent {
 			h, err := syscall.OpenProcess(syscall.PROCESS_TERMINATE, false, pid)
 			if err == nil {
@@ -61,8 +60,6 @@ func killProcessTree(parentPID uint32, killParent bool) {
 			}
 		}
 	}
-
-	terminateTree(parentPID)
 }
 
 // reapGroup cleans up any orphaned processes remaining in the child's process
