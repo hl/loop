@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A single command-stage non-zero exit is now recorded as `command_failed` in the state file, event log, and status output, instead of being mislabeled `fail_streak` ("3 consecutive failures") — which only applies to the agent loop's retry breaker, not a one-shot gate.
 - `brr workflow run` now scrubs stale signal files (`.brr-complete`, `.brr-failed`, `.brr-needs-approval`, `.brr-cycle`) once at entry, before any stage runs. Previously a signal file left behind by a `kill -9`'d or power-lost run could override a command stage's real exit status (a stale `.brr-complete` recording a failing gate as "completed") or short-circuit the next agent stage. Only regular files are removed.
 - Windows process-tree cleanup no longer risks infinite recursion. The Toolhelp parent→children walk now tracks visited PIDs, so PID-reuse cycles or self-referential parent links can't exhaust the stack and leave orphaned child processes running mid-cleanup.
 - Signals that arrive in the brief window between spawning an iteration's child and publishing it are no longer dropped. Previously a second Ctrl+C landing in that window incremented the escalation counter without reaching the child, so a third press jumped straight to SIGKILL and skipped the graceful interrupt; a SIGTERM in the window printed "forwarding" but never delivered. The engine now records such signals and forwards them (SIGTERM, then the reached SIGINT/SIGKILL level) as soon as the child is published.

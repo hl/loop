@@ -19,7 +19,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | F2 | medium | confirmed | config | Project profile deep-merges with same-named global profile | open |
 | E2 | low | confirmed | engine | Signals during Start→publish window dropped yet consume escalation level | fixed |
 | E3 | low | likely | engine | Windows terminateTree can recurse infinitely on PID cycles | fixed |
-| W2 | low | confirmed | workflow | Single command failure recorded as `fail_streak` | open |
+| W2 | low | confirmed | workflow | Single command failure recorded as `fail_streak` | fixed |
 | W3 | low | confirmed | workflow | Duplicate `workflow_started` events on resume | open |
 | W4 | low | confirmed | workflow | Negative per-stage `max` silently falls back to default | open |
 | S4 | low | confirmed | workflow | WatchStatus wipes final frame when state file vanishes | open |

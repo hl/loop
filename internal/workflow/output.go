@@ -27,6 +27,8 @@ func stopReason(result *engine.Result) string {
 		return "max_iterations"
 	case engine.ReasonFailStreak:
 		return "fail_streak"
+	case engine.ReasonCommandFailed:
+		return "command_failed"
 	case engine.ReasonInterrupted:
 		return "interrupted"
 	default:

@@ -99,6 +99,16 @@ func TestFormatFailStreak(t *testing.T) {
 	}
 }
 
+func TestFormatCommandFailed(t *testing.T) {
+	title, body := format(&engine.Result{Reason: engine.ReasonCommandFailed})
+	if title != "brr — command failed" {
+		t.Errorf("unexpected title: %q", title)
+	}
+	if body != "A command stage exited non-zero." {
+		t.Errorf("unexpected body: %q", body)
+	}
+}
+
 func TestFormatWorkflowError(t *testing.T) {
 	title, body := formatWorkflowError(errors.New("stage 1 (prepare): prompt file not found: prepare.md"))
 	if title != "brr — workflow error" {

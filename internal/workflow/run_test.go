@@ -72,8 +72,8 @@ func TestRunCommandStageFailurePreservesState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected command stage failure")
 	}
-	if result == nil || result.Reason != engine.ReasonFailStreak {
-		t.Fatalf("expected fail streak result, got %#v", result)
+	if result == nil || result.Reason != engine.ReasonCommandFailed {
+		t.Fatalf("expected command_failed result, got %#v", result)
 	}
 	state := readState(t, "ship")
 	if state.NextStageID != "check" {
@@ -81,6 +81,10 @@ func TestRunCommandStageFailurePreservesState(t *testing.T) {
 	}
 	if state.Stages[0].Status != "error" {
 		t.Fatalf("expected stage status error, got %q", state.Stages[0].Status)
+	}
+	// A single deterministic gate failure must not be mislabeled as a fail streak.
+	if state.Stages[0].Reason != "command_failed" {
+		t.Fatalf("expected reason command_failed, got %q", state.Stages[0].Reason)
 	}
 }
 

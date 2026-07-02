@@ -58,6 +58,7 @@ const (
 	ReasonMaxIterations                   // max iteration count reached
 	ReasonFailStreak                      // too many consecutive failures
 	ReasonInterrupted                     // user signal (Ctrl+C / SIGTERM)
+	ReasonCommandFailed                   // a workflow command stage exited non-zero (single gate failure)
 )
 
 // Result carries the structured stop reason from a completed engine run.

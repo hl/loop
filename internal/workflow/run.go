@@ -216,7 +216,7 @@ func runCommandStage(stage Stage) (*engine.Result, error) {
 			cleanupSignalFiles()
 			return sig, nil
 		}
-		return &engine.Result{Reason: engine.ReasonFailStreak}, err
+		return &engine.Result{Reason: engine.ReasonCommandFailed}, err
 	}
 
 	var interrupted atomic.Bool
@@ -249,7 +249,7 @@ func runCommandStage(stage Stage) (*engine.Result, error) {
 		return &engine.Result{Reason: engine.ReasonInterrupted}, engine.ErrInterrupted
 	}
 	if err != nil {
-		return &engine.Result{Reason: engine.ReasonFailStreak}, err
+		return &engine.Result{Reason: engine.ReasonCommandFailed}, err
 	}
 	return &engine.Result{Reason: engine.ReasonComplete}, nil
 }

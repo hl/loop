@@ -50,6 +50,8 @@ func format(result *engine.Result) (title, body string) {
 		return "brr — max iterations", "Maximum iteration count reached."
 	case engine.ReasonFailStreak:
 		return "brr — stopped", "Too many consecutive failures."
+	case engine.ReasonCommandFailed:
+		return "brr — command failed", "A command stage exited non-zero."
 	default:
 		return "brr — stopped", "The loop has stopped."
 	}
