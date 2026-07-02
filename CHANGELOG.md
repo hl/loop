@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Linux desktop notifications whose title or body begins with `-` now render. The agent-controlled text was passed as positional argv to `notify-send`, which parses options anywhere in argv (GOption), so a body like `--version mismatch...` was swallowed as an option and the notification silently did not appear. brr now inserts a `--` option terminator before the positional arguments.
+
 - A project `.brr.yaml` profile no longer deep-merges with a same-named global profile. Config layers are now unmarshalled separately and merged with whole-profile replacement, so a project profile that sets `command` but omits `args` no longer silently inherits the global profile's args (e.g. `--dangerously-skip-permissions --model opus` leaking into a command that never asked for them). Profiles from different names still combine across layers.
 
 - Profile names are now matched case-insensitively, so an uppercase or mixed-case `default:` value and `-p` flag reach their profile. viper lowercases config map keys internally, so `default: MyAgent` with `profiles: { MyAgent: ... }` (or `-p MyAgent`) previously failed every invocation with `default profile "MyAgent" not found`. The default name and every profile lookup are now normalized to lowercase.

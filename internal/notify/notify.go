@@ -80,6 +80,14 @@ func truncate(s string, maxLen int) string {
 	return s[:cut] + "…"
 }
 
+// notifySendArgs builds the argv for the Linux notify-send command. The "--"
+// terminates option parsing (notify-send uses GOption, which otherwise scans
+// the whole argv for flags), so an agent-controlled title or body that begins
+// with "-" is treated as positional text rather than a dropped option.
+func notifySendArgs(title, body string) []string {
+	return []string{"notify-send", "--", title, body}
+}
+
 // run executes a command and returns any error, swallowing stderr output.
 func run(name string, args ...string) error {
 	cmd := exec.Command(name, args...)

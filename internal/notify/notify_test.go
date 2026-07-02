@@ -129,6 +129,23 @@ func TestFormatWorkflowErrorWithoutError(t *testing.T) {
 	}
 }
 
+func TestNotifySendArgsInsertsOptionTerminator(t *testing.T) {
+	// A title and body that begin with "-" must survive as positional args.
+	args := notifySendArgs("--version mismatch", "-rf details")
+	want := []string{"notify-send", "--", "--version mismatch", "-rf details"}
+	if len(args) != len(want) {
+		t.Fatalf("expected %d args, got %d: %v", len(want), len(args), args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("arg %d: expected %q, got %q", i, want[i], args[i])
+		}
+	}
+	if args[1] != "--" {
+		t.Errorf("expected option terminator -- before positional args, got %q", args[1])
+	}
+}
+
 func TestTruncateShort(t *testing.T) {
 	s := "hello"
 	if truncate(s, 256) != "hello" {
