@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Config, workflow YAML, workflow state JSON, and `.gitignore` reads are now size-capped. These used an uncapped `io.ReadAll`, so a planted multi-GB file (e.g. a `.brr/state/*.json`) could exhaust memory even in a read-only command like `brr workflow status`. A new `fsutil.ReadRegularFileCapped` bounds each read (1 MiB for config/workflow/gitignore, 4 MiB for state) and reports the offending file and limit. The prompt (10 MiB) and signal-file (4 KiB) reads were already capped and are unchanged.
+
 - `brr init` now re-verifies the `.brr` parent directory (not just the leaf `.brr/prompts`) before creating the project tree in stage 2. `MkdirAll` and the leaf symlink check both follow a symlinked intermediate `.brr`, so a `.brr -> elsewhere` swap slipped in after pre-flight could redirect the created directories — and later state writes — outside the repository. The parent is now rejected as a symlink at the stage boundary, closing that race window.
 
 - Linux desktop notifications whose title or body begins with `-` now render. The agent-controlled text was passed as positional argv to `notify-send`, which parses options anywhere in argv (GOption), so a body like `--version mismatch...` was swallowed as an option and the notification silently did not appear. brr now inserts a `--` option terminator before the positional arguments.

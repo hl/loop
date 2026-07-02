@@ -45,6 +45,26 @@ func ReadRegularFile(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// ReadRegularFileCapped reads path only if it is a regular file, reading at most
+// maxBytes. It returns an error naming the path and limit if the file exceeds
+// maxBytes, so a planted oversized file cannot exhaust memory. maxBytes is the
+// inclusive limit: a file of exactly maxBytes is accepted.
+func ReadRegularFileCapped(path string, maxBytes int64) ([]byte, error) {
+	f, err := OpenRegularFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("%s exceeds maximum size of %d bytes", path, maxBytes)
+	}
+	return data, nil
+}
+
 // IsRegularFile returns true if path exists and is a regular file.
 func IsRegularFile(path string) bool {
 	fi, err := os.Lstat(path)

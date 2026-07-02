@@ -9,6 +9,11 @@ import (
 	"github.com/hl/brr/internal/fsutil"
 )
 
+// maxScaffoldFileSize bounds reads of files brr backs up or rewrites during
+// init (.brr.yaml, .gitignore). Both are tiny; 1 MiB prevents a planted
+// oversized file from exhausting memory during scaffolding.
+const maxScaffoldFileSize = 1 << 20 // 1 MiB
+
 // Init scaffolds a project for brr.
 func Init(force bool) error {
 	// Pre-flight: reject symlinks to prevent writes outside the repo
@@ -33,7 +38,7 @@ func Init(force bool) error {
 		stateDir:    filepath.Join(".brr", "state"),
 	}
 	if yamlExists {
-		data, err := fsutil.ReadRegularFile(".brr.yaml")
+		data, err := fsutil.ReadRegularFileCapped(".brr.yaml", maxScaffoldFileSize)
 		if err != nil {
 			return fmt.Errorf("cannot back up .brr.yaml for rollback: %w", err)
 		}
@@ -213,7 +218,7 @@ func updateGitignore() (bool, error) {
 		return false, err
 	}
 
-	existing, err := fsutil.ReadRegularFile(".gitignore")
+	existing, err := fsutil.ReadRegularFileCapped(".gitignore", maxScaffoldFileSize)
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}

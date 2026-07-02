@@ -25,6 +25,11 @@ type Config struct {
 	Profiles map[string]Profile `mapstructure:"profiles"`
 }
 
+// maxConfigFileSize bounds how much of a project .brr.yaml brr will read. Config
+// files are a handful of profiles; 1 MiB is far more than any real config yet
+// small enough that a planted oversized file cannot exhaust memory.
+const maxConfigFileSize = 1 << 20 // 1 MiB
+
 // Load reads config from files and returns a merged Config.
 // Priority: .brr.yaml > ~/.config/brr/config.yaml.
 // Returns an error if no config is found or if a config file is malformed.
@@ -52,7 +57,7 @@ func Load() (Config, error) {
 	// Layer 2: project config. Read through fsutil so project config never
 	// follows symlinks or other non-regular files, then parse it into its own
 	// Config so a project profile does not inherit fields it omits.
-	if data, err := fsutil.ReadRegularFile(".brr.yaml"); err == nil {
+	if data, err := fsutil.ReadRegularFileCapped(".brr.yaml", maxConfigFileSize); err == nil {
 		v := viper.New()
 		v.SetConfigType("yaml")
 		if err := v.ReadConfig(bytes.NewReader(data)); err != nil {

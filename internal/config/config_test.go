@@ -221,6 +221,27 @@ func TestLoadProjectConfigDirectoryRejected(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsOversizedConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	// A planted, oversized .brr.yaml must be rejected rather than read whole.
+	big := make([]byte, maxConfigFileSize+1)
+	for i := range big {
+		big[i] = 'a'
+	}
+	if err := os.WriteFile(".brr.yaml", big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for oversized config file")
+	}
+	if !strings.Contains(err.Error(), ".brr.yaml") {
+		t.Errorf("expected error to mention .brr.yaml, got: %v", err)
+	}
+}
+
 func TestLoadNoProfiles(t *testing.T) {
 	t.Chdir(t.TempDir())
 
