@@ -247,6 +247,17 @@ func runCommandStage(stage Stage) (*engine.Result, error) {
 	err := cmd.Wait()
 	close(done)
 
+	// close(done) races with a signal still buffered in sigCh: the goroutine may
+	// exit via <-done without recording it. The tty delivers Ctrl+C to the shared
+	// group, so a fast-dying child can return from Wait before the forwarder runs.
+	// Drain the channel, and also classify a child that died from an interrupt
+	// signal as an interrupt — otherwise the same keypress is intermittently
+	// reported as a stage failure instead of an interrupt.
+	drainSignals(sigCh, &interrupted)
+	if !interrupted.Load() && exitedFromInterrupt(err) {
+		interrupted.Store(true)
+	}
+
 	if sig := detectSignalFiles(); sig != nil {
 		cleanupSignalFiles()
 		return sig, nil
@@ -258,6 +269,19 @@ func runCommandStage(stage Stage) (*engine.Result, error) {
 		return &engine.Result{Reason: engine.ReasonCommandFailed}, err
 	}
 	return &engine.Result{Reason: engine.ReasonComplete}, nil
+}
+
+// drainSignals non-blockingly consumes any signals still buffered in ch,
+// recording that an interrupt occurred for each one.
+func drainSignals(ch <-chan os.Signal, interrupted *atomic.Bool) {
+	for {
+		select {
+		case <-ch:
+			interrupted.Store(true)
+		default:
+			return
+		}
+	}
 }
 
 func saveNextStage(wf Workflow, state *State, store store, stageIdx int) {

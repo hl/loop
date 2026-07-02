@@ -13,7 +13,7 @@ Status values: `open` → `fixed (<commit>)` / `wontfix (<reason>)`.
 | F1 | high | confirmed | config | Viper lowercases profile names; uppercase profiles unreachable | open |
 | W1 | medium | confirmed | engine+workflow | Interrupt swallowed when stage ends via signal file or max iterations | open |
 | S2 | medium | confirmed | workflow | Double SIGINT delivered to command-stage child | fixed |
-| S3 | medium | likely | workflow | Race misclassifies Ctrl+C as stage failure | open |
+| S3 | medium | likely | workflow | Race misclassifies Ctrl+C as stage failure | fixed |
 | C1 | medium | confirmed | cli | Empty resolved prompt accepted for workflow agent stages | open |
 | C2 | medium | confirmed | cli | Workflow error notifications misreport the terminal event | open |
 | F2 | medium | confirmed | config | Project profile deep-merges with same-named global profile | open |

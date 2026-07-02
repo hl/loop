@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Ctrl+C during a workflow command stage is no longer intermittently misreported as a stage failure. brr now drains any signal left buffered when the child exits, and classifies a child that died from SIGINT/SIGTERM (via its wait status) as an interrupt — so the stage is consistently recorded "interrupted" with exit 130 instead of "error".
 - Ctrl+C during a workflow command stage no longer double-interrupts the child. The child shares brr's foreground process group, so the terminal already delivers the interrupt; brr no longer re-sends SIGINT (which made tools with escalating interrupt semantics — pytest, npm, coding agents — hard-abort). SIGTERM, which is not tty-broadcast, is still forwarded.
 - A single command-stage non-zero exit is now recorded as `command_failed` in the state file, event log, and status output, instead of being mislabeled `fail_streak` ("3 consecutive failures") — which only applies to the agent loop's retry breaker, not a one-shot gate.
 - `brr workflow run` now scrubs stale signal files (`.brr-complete`, `.brr-failed`, `.brr-needs-approval`, `.brr-cycle`) once at entry, before any stage runs. Previously a signal file left behind by a `kill -9`'d or power-lost run could override a command stage's real exit status (a stale `.brr-complete` recording a failing gate as "completed") or short-circuit the next agent stage. Only regular files are removed.

@@ -299,6 +299,38 @@ func TestRunCommandStageDoesNotForwardSIGINT(t *testing.T) {
 	}
 }
 
+func TestRunCommandStageChildKilledBySignalIsInterrupt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX wait-status signal classification")
+	}
+	t.Chdir(t.TempDir())
+	// The child kills itself with SIGINT (as the tty would to the shared group)
+	// and returns from Wait before brr's handler observes anything, so the
+	// interrupt flag is not set by the goroutine. Without wait-status
+	// classification this keypress is misreported as a stage failure.
+	cmd := []string{"sh", "-c", "kill -INT $$"}
+	wf := testWorkflow([]Stage{{ID: "check", Type: StageTypeCommand, Command: cmd}}, nil)
+
+	result, err := Run(Options{
+		Name:     "ship",
+		Workflow: wf,
+		Config:   testConfig(echoCmd()),
+		ResolvePrompt: func(name string) (string, error) {
+			return name, nil
+		},
+	})
+	if !errors.Is(err, engine.ErrInterrupted) {
+		t.Fatalf("expected interrupted, got result=%#v err=%v", result, err)
+	}
+	if result == nil || result.Reason != engine.ReasonInterrupted {
+		t.Fatalf("expected interrupted result, got %#v", result)
+	}
+	state := readState(t, "ship")
+	if state.Stages[0].Status != "interrupted" {
+		t.Fatalf("expected stage status interrupted, got %q", state.Stages[0].Status)
+	}
+}
+
 func TestRunScrubsStaleSignalFilesAtEntry(t *testing.T) {
 	t.Chdir(t.TempDir())
 	// A stale .brr-complete survives a kill -9 of a previous run. Without the
