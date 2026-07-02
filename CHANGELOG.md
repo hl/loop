@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Workflow error notifications now report the actual error instead of the stage's stop reason. A single command-stage failure used to notify "Too many consecutive failures" and a cycle-without-config error notified "cycle requested" as if the run were continuing. The error path now sends the real wrapped error (e.g. "stage build: exit status 1"), which identifies the terminal event per the notifications spec. Interrupts still send no notification.
+
 ### Changed
 
 - Workflow stage `prompt:` values are now resolved through a restricted resolver: only named prompts and relative paths inside the working tree are allowed; absolute paths and `..` traversal are rejected. A cloned repo's `.brr/workflows/*.yaml` is untrusted, so it could previously read any absolute or `../`-traversing file (up to 10 MiB) into the agent's stdin — and `brr workflow validate` would read it too, doubling as a file-existence oracle. The root `brr <prompt>` argument keeps its permissive behavior (the user typed it).

@@ -20,6 +20,13 @@ const exitCodeSIGINT = 130 // 128 + SIGINT(2)
 
 const maxPromptFileSize = 10 * 1024 * 1024 // 10 MiB
 
+// Notification dispatch is routed through these package-level indirections so
+// tests can observe which terminal event a command chose to report.
+var (
+	notifySend          = notify.Send
+	notifyWorkflowError = notify.SendWorkflowError
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "brr <prompt> [flags]",
 	Short: "Your AI agent, but unhinged",

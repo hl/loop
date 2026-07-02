@@ -8,7 +8,6 @@ import (
 
 	"github.com/hl/brr/internal/config"
 	"github.com/hl/brr/internal/engine"
-	"github.com/hl/brr/internal/notify"
 	"github.com/hl/brr/internal/ui"
 	"github.com/hl/brr/internal/workflow"
 	"github.com/spf13/cobra"
@@ -91,7 +90,7 @@ func runWorkflow(cmd *cobra.Command, args []string) error {
 	}
 	returnWorkflowError := func(err error) error {
 		if doNotify {
-			if nErr := notify.SendWorkflowError(err); nErr != nil {
+			if nErr := notifyWorkflowError(err); nErr != nil {
 				fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
 			}
 		}
@@ -118,7 +117,7 @@ func runWorkflow(cmd *cobra.Command, args []string) error {
 	if doNotify {
 		notifyFn = func() {
 			result := &engine.Result{Reason: engine.ReasonComplete}
-			if nErr := notify.Send(result); nErr != nil {
+			if nErr := notifySend(result); nErr != nil {
 				fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
 			}
 		}
@@ -135,23 +134,22 @@ func runWorkflow(cmd *cobra.Command, args []string) error {
 	})
 
 	if runErr != nil {
-		if result != nil && result.Reason == engine.ReasonInterrupted {
+		interrupted := result != nil && result.Reason == engine.ReasonInterrupted
+		if interrupted {
 			cmd.SilenceErrors = true
 		}
-		if doNotify {
-			switch {
-			case result != nil && result.Reason != engine.ReasonInterrupted:
-				if nErr := notify.Send(result); nErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
-				}
-			case result == nil:
-				if nErr := notify.SendWorkflowError(runErr); nErr != nil {
-					fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
-				}
+		// Notify with the actual error, which names the terminal event (e.g.
+		// "stage build: exit status 1" or the cycle-without-config error), rather
+		// than the stage's stop reason — which misreports a single command failure
+		// as "Too many consecutive failures" and a cycle error as if the run were
+		// continuing. Interrupts never notify (workflow.md req 30).
+		if doNotify && !interrupted {
+			if nErr := notifyWorkflowError(runErr); nErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
 			}
 		}
 	} else if doNotify && result != nil && result.Reason == engine.ReasonFailed {
-		if nErr := notify.Send(result); nErr != nil {
+		if nErr := notifySend(result); nErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: notification failed: %v\n", nErr)
 		}
 	}
